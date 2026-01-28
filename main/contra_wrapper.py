@@ -13,6 +13,8 @@ import time
 
 import gymnasium as gym
 import numpy as np
+import cv2
+import matplotlib.pyplot as plt
 
 
 class ContraWrapper(gym.Wrapper):
@@ -31,6 +33,7 @@ class ContraWrapper(gym.Wrapper):
 
         # Reward scaling
         self.score_coeff = 1.0  # Reward for score increase
+        self.move_coeff = 0.5  # Reward for moving right
         self.death_penalty = -50.0  # Penalty for dying
 
         self.total_timesteps = 0
@@ -38,6 +41,7 @@ class ContraWrapper(gym.Wrapper):
         # Track previous state
         self.prev_score = 0
         self.prev_lives = 2  # Contra Force starts with 2 lives
+        self.prev_x_pos = 0
 
         # Observation space: downsampled RGB
         self.observation_space = gym.spaces.Box(
@@ -47,6 +51,11 @@ class ContraWrapper(gym.Wrapper):
         self.reset_round = reset_round
         self.rendering = rendering
         self.random_start_frames = random_start_frames
+
+        if self.rendering:
+            plt.ion()  # Turn on interactive mode
+            self.fig, self.ax = plt.subplots()
+            self.im = None
 
     def _preprocess_frame(self, frame):
         """Downsample frame to 84x84."""
@@ -69,6 +78,7 @@ class ContraWrapper(gym.Wrapper):
         # Initialize tracking variables
         self.prev_score = info.get("score", 0)
         self.prev_lives = info.get("lives", 2)
+        self.prev_x_pos = info.get("x_pos", 0)
         self.total_timesteps = 0
 
         # Clear frame stack and fill with initial observation
@@ -85,8 +95,13 @@ class ContraWrapper(gym.Wrapper):
                 observation, _, _, _, info = self.env.step(no_op)
                 self.frame_stack.append(self._preprocess_frame(observation))
                 if self.rendering:
-                    self.env.render()
-                    time.sleep(0.01)
+                    # Use Matplotlib for rendering
+                    if self.im is None:
+                        self.im = self.ax.imshow(observation)
+                    else:
+                        self.im.set_data(observation)
+                    self.fig.canvas.flush_events()
+                    plt.pause(0.001)
 
         return self._stack_observation(), info
 
@@ -99,8 +114,13 @@ class ContraWrapper(gym.Wrapper):
             self.frame_stack.append(self._preprocess_frame(obs))
 
             if self.rendering:
-                self.env.render()
-                time.sleep(0.01)
+                # Use Matplotlib for rendering
+                if self.im is None:
+                    self.im = self.ax.imshow(obs)
+                else:
+                    self.im.set_data(obs)
+                self.fig.canvas.flush_events()
+                plt.pause(0.001)
 
             if term or trunc:
                 done = True
@@ -109,11 +129,22 @@ class ContraWrapper(gym.Wrapper):
         # Get current state
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", self.prev_lives)
+        curr_x_pos = info.get("x_pos", self.prev_x_pos)
 
         self.total_timesteps += self.num_step_frames
 
         # Calculate custom reward
         custom_reward = 0
+
+        # Movement reward (encourage moving right/forward)
+        x_diff = curr_x_pos - self.prev_x_pos
+        # Handle screen wrap (x_pos is 0-255, wraps when scrolling)
+        if x_diff < -100:  # Wrapped forward
+            x_diff += 256
+        elif x_diff > 100:  # Wrapped backward
+            x_diff -= 256
+        if x_diff > 0:
+            custom_reward += self.move_coeff * x_diff
 
         # Score reward
         score_diff = curr_score - self.prev_score
@@ -131,6 +162,7 @@ class ContraWrapper(gym.Wrapper):
         # Update previous state
         self.prev_score = curr_score
         self.prev_lives = curr_lives
+        self.prev_x_pos = curr_x_pos
 
         # Normalize reward
         normalized_reward = custom_reward * 0.01
