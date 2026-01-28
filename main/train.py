@@ -10,10 +10,11 @@ Usage:
 
 import os
 
+import numpy as np
 import stable_retro as retro
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from contra_wrapper import ContraWrapper
@@ -30,6 +31,42 @@ STATE = "Level1"
 
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(SAVE_DIR, exist_ok=True)
+
+
+# =============================================================================
+# CUSTOM CALLBACK FOR TENSORBOARD LOGGING
+# =============================================================================
+
+class TensorboardCallback(BaseCallback):
+    """Custom callback for logging episode stats to TensorBoard."""
+
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.episode_distances = []
+        self.episode_scores = []
+        self.episode_rewards = []
+
+    def _on_step(self) -> bool:
+        # Check for episode end in each environment
+        for i, info in enumerate(self.locals.get("infos", [])):
+            if "episode_distance" in info:
+                self.episode_distances.append(info["episode_distance"])
+                self.episode_scores.append(info["episode_score"])
+                self.episode_rewards.append(info["episode_reward"])
+
+        # Log averages every 100 episodes
+        if len(self.episode_distances) >= 100:
+            self.logger.record("contra/avg_distance", np.mean(self.episode_distances))
+            self.logger.record("contra/avg_score", np.mean(self.episode_scores))
+            self.logger.record("contra/avg_reward", np.mean(self.episode_rewards))
+            self.logger.record("contra/max_distance", np.max(self.episode_distances))
+            self.logger.record("contra/max_score", np.max(self.episode_scores))
+            # Clear for next batch
+            self.episode_distances = []
+            self.episode_scores = []
+            self.episode_rewards = []
+
+        return True
 
 
 # =============================================================================
@@ -88,7 +125,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 70)
-    print("Contra - PPO Training")
+    print("Contra Force - PPO Training (Single Life Mode)")
     print("=" * 70)
     print(f"  Game:         {GAME}")
     print(f"  State:        {args.state}")
@@ -136,18 +173,19 @@ def main():
             tensorboard_log=LOG_DIR,
         )
 
-    # Checkpoint callback
+    # Callbacks
     checkpoint_interval = 62500  # 62500 * 16 envs = 1M steps
     checkpoint_callback = CheckpointCallback(
         save_freq=checkpoint_interval,
         save_path=SAVE_DIR,
         name_prefix="ppo_contra",
     )
+    tensorboard_callback = TensorboardCallback()
 
     # Training
     model.learn(
         total_timesteps=args.timesteps,
-        callback=[checkpoint_callback],
+        callback=[checkpoint_callback, tensorboard_callback],
         progress_bar=True,
     )
 

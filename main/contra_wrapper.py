@@ -4,8 +4,8 @@ Contra Force Custom Wrapper for Stable-Baselines3
 
 - Fixed frame skip for all actions
 - Frame stacking with RGB channel extraction
-- Reward based on score and survival
-- Episode ends on death (lives == 0)
+- Reward based on score and forward movement
+- Episode ends on single death (one life per episode)
 """
 
 import collections
@@ -42,6 +42,11 @@ class ContraWrapper(gym.Wrapper):
         self.prev_score = 0
         self.prev_lives = 2  # Contra Force starts with 2 lives
         self.prev_x_pos = 0
+
+        # Episode stats for logging
+        self.episode_distance = 0
+        self.episode_score = 0
+        self.episode_reward = 0
 
         # Observation space: downsampled RGB
         self.observation_space = gym.spaces.Box(
@@ -80,6 +85,11 @@ class ContraWrapper(gym.Wrapper):
         self.prev_lives = info.get("lives", 2)
         self.prev_x_pos = info.get("x_pos", 0)
         self.total_timesteps = 0
+
+        # Reset episode stats
+        self.episode_distance = 0
+        self.episode_score = 0
+        self.episode_reward = 0
 
         # Clear frame stack and fill with initial observation
         self.frame_stack.clear()
@@ -145,18 +155,17 @@ class ContraWrapper(gym.Wrapper):
             x_diff -= 256
         if x_diff > 0:
             custom_reward += self.move_coeff * x_diff
+            self.episode_distance += x_diff
 
         # Score reward
         score_diff = curr_score - self.prev_score
         if score_diff > 0:
             custom_reward += self.score_coeff * score_diff
+            self.episode_score += score_diff
 
-        # Death penalty
+        # Single life mode: reset on any death
         if curr_lives < self.prev_lives:
             custom_reward += self.death_penalty
-
-        # Game over (lives == 0)
-        if curr_lives == 0 or term:
             done = True
 
         # Update previous state
@@ -166,6 +175,13 @@ class ContraWrapper(gym.Wrapper):
 
         # Normalize reward
         normalized_reward = custom_reward * 0.01
+        self.episode_reward += normalized_reward
+
+        # Add episode stats to info for logging (on episode end)
+        if done:
+            info["episode_distance"] = self.episode_distance
+            info["episode_score"] = self.episode_score
+            info["episode_reward"] = self.episode_reward
 
         if not self.reset_round:
             done = False
