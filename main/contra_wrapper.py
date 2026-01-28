@@ -33,8 +33,8 @@ class ContraWrapper(gym.Wrapper):
 
         # Reward scaling
         self.score_coeff = 1.0  # Reward for score increase
-        self.move_coeff = 0.5  # Reward for moving right
-        self.death_penalty = -50.0  # Penalty for dying
+        self.move_coeff = 1.0  # Reward for reaching new max distance
+        self.death_penalty = -10.0  # Reduced penalty for dying (was -50)
 
         self.total_timesteps = 0
 
@@ -42,6 +42,8 @@ class ContraWrapper(gym.Wrapper):
         self.prev_score = 0
         self.prev_lives = 2  # Contra Force starts with 2 lives
         self.prev_x_pos = 0
+        self.cumulative_x = 0  # Cumulative x position (handles screen wrap)
+        self.max_x_reached = 0  # Track furthest cumulative point reached
 
         # Episode stats for logging
         self.episode_distance = 0
@@ -84,6 +86,8 @@ class ContraWrapper(gym.Wrapper):
         self.prev_score = info.get("score", 0)
         self.prev_lives = info.get("lives", 2)
         self.prev_x_pos = info.get("x_pos", 0)
+        self.cumulative_x = 0  # Start at 0, accumulate movement
+        self.max_x_reached = 0  # Track furthest cumulative point
         self.total_timesteps = 0
 
         # Reset episode stats
@@ -146,16 +150,23 @@ class ContraWrapper(gym.Wrapper):
         # Calculate custom reward
         custom_reward = 0
 
-        # Movement reward (encourage moving right/forward)
+        # Calculate movement delta (handle screen wrap: x_pos is 0-255)
         x_diff = curr_x_pos - self.prev_x_pos
-        # Handle screen wrap (x_pos is 0-255, wraps when scrolling)
-        if x_diff < -100:  # Wrapped forward
+        if x_diff < -100:  # Wrapped forward (e.g., 250 -> 10)
             x_diff += 256
-        elif x_diff > 100:  # Wrapped backward
+        elif x_diff > 100:  # Wrapped backward (e.g., 10 -> 250)
             x_diff -= 256
-        if x_diff > 0:
-            custom_reward += self.move_coeff * x_diff
-            self.episode_distance += x_diff
+
+        # Update cumulative position (tracks total forward progress)
+        self.cumulative_x += x_diff
+
+        # Movement reward: only reward NEW maximum distance reached
+        # This prevents oscillation exploit - going back and forth gives no reward
+        if self.cumulative_x > self.max_x_reached:
+            progress = self.cumulative_x - self.max_x_reached
+            custom_reward += self.move_coeff * progress
+            self.episode_distance += progress
+            self.max_x_reached = self.cumulative_x
 
         # Score reward
         score_diff = curr_score - self.prev_score
