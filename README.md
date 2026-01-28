@@ -1,6 +1,6 @@
-# Contra AI Agent
+# Contra Force AI Agent
 
-Train a PPO agent to play Contra (NES) using Stable-Baselines3 and Gym Retro.
+Train a PPO agent to play Contra Force (NES) using Stable-Baselines3 and Gym Retro.
 
 ## Setup
 
@@ -13,13 +13,11 @@ pip install -r requirements.txt
 
 ### 2. Import ROM
 
-The Contra ROM is not included. You need to import it manually:
+The Contra Force ROM is not included. You need to import it manually:
 
 ```bash
-python -m retro.import /path/to/contra.nes
+python -m retro.import /path/to/Contra\ Force\ \(USA\).nes
 ```
-
-The game uses the experimental integration, so make sure stable-retro can find it.
 
 ## Usage
 
@@ -36,9 +34,6 @@ python train.py --timesteps 5000000
 
 # Resume from checkpoint
 python train.py --resume trained_models/ppo_contra_1000000_steps.zip
-
-# Train on different level
-python train.py --state Level2
 
 # Add random start frames for robustness
 python train.py --random-start 30
@@ -83,17 +78,16 @@ contra_agent/
 
 ## Game Info
 
-- **Game**: Contra (NES) - Experimental integration
-- **Levels**: 8 levels available (Level1-Level8)
+- **Game**: Contra Force (NES)
+- **State**: Level1
 - **Observation**: 84x84 RGB (downsampled from 256x224)
 - **Action**: MultiBinary (NES controller: A, B, Select, Start, Up, Down, Left, Right)
 - **Frame Skip**: 4 frames per action
 
 ## Reward Design
 
-- **Progress**: +1.0 per unit of horizontal scroll (xscroll)
-- **Death**: -100.0 penalty for losing a life
-- **Level Complete**: +500.0 bonus for completing a level
+- **Score**: +1.0 per point increase
+- **Death**: -50.0 penalty for losing a life
 - **Normalization**: All rewards scaled by 0.01
 
 ## Hyperparameters

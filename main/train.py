@@ -25,7 +25,7 @@ from contra_wrapper import ContraWrapper
 NUM_ENV = 16
 LOG_DIR = "logs"
 SAVE_DIR = "trained_models"
-GAME = "Contra-Nes"
+GAME = "ContraForce-Nes-v0"
 STATE = "Level1"
 
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -61,7 +61,6 @@ def make_env(game, state, seed=0, random_start_frames=0):
             use_restricted_actions=retro.Actions.FILTERED,
             obs_type=retro.Observations.IMAGE,
             render_mode=None,
-            inttype=retro.data.Integrations.ALL,  # Include experimental games
         )
         env = ContraWrapper(env, random_start_frames=random_start_frames)
         env = Monitor(env)

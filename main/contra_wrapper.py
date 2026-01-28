@@ -1,11 +1,11 @@
 """
-Contra Custom Wrapper for Stable-Baselines3
-============================================
+Contra Force Custom Wrapper for Stable-Baselines3
+==================================================
 
 - Fixed frame skip for all actions
 - Frame stacking with RGB channel extraction
-- Reward based on progress (xscroll) and survival
-- Episode ends on death or level completion
+- Reward based on score and survival
+- Episode ends on death (lives == 0)
 """
 
 import collections
@@ -16,7 +16,7 @@ import numpy as np
 
 
 class ContraWrapper(gym.Wrapper):
-    """Custom wrapper for Contra NES."""
+    """Custom wrapper for Contra Force NES."""
 
     def __init__(self, env, reset_round=True, rendering=False, random_start_frames=0):
         super().__init__(env)
@@ -30,16 +30,14 @@ class ContraWrapper(gym.Wrapper):
         self.num_step_frames = 4
 
         # Reward scaling
-        self.progress_coeff = 1.0  # Reward for moving forward
-        self.death_penalty = -100.0  # Penalty for dying
-        self.level_bonus = 500.0  # Bonus for completing level
+        self.score_coeff = 1.0  # Reward for score increase
+        self.death_penalty = -50.0  # Penalty for dying
 
         self.total_timesteps = 0
 
         # Track previous state
-        self.prev_xscroll = 0
-        self.prev_lives = 3
-        self.prev_level = 1
+        self.prev_score = 0
+        self.prev_lives = 2  # Contra Force starts with 2 lives
 
         # Observation space: downsampled RGB
         self.observation_space = gym.spaces.Box(
@@ -53,7 +51,6 @@ class ContraWrapper(gym.Wrapper):
     def _preprocess_frame(self, frame):
         """Downsample frame to 84x84."""
         # NES resolution is 256x224, downsample to 84x84
-        # Simple resize using stride
         h, w = frame.shape[:2]
         new_h, new_w = 84, 84
         h_step = h // new_h
@@ -70,9 +67,8 @@ class ContraWrapper(gym.Wrapper):
         observation, info = self.env.reset(**kwargs)
 
         # Initialize tracking variables
-        self.prev_xscroll = info.get("xscroll", 0)
-        self.prev_lives = info.get("lives", 3)
-        self.prev_level = info.get("level", 1)
+        self.prev_score = info.get("score", 0)
+        self.prev_lives = info.get("lives", 2)
         self.total_timesteps = 0
 
         # Clear frame stack and fill with initial observation
@@ -106,46 +102,35 @@ class ContraWrapper(gym.Wrapper):
                 self.env.render()
                 time.sleep(0.01)
 
-            # Accumulate default reward
-            total_reward += reward
-
             if term or trunc:
                 done = True
                 break
 
         # Get current state
-        curr_xscroll = info.get("xscroll", 0)
+        curr_score = info.get("score", 0)
         curr_lives = info.get("lives", self.prev_lives)
-        curr_level = info.get("level", self.prev_level)
 
         self.total_timesteps += self.num_step_frames
 
         # Calculate custom reward
         custom_reward = 0
 
-        # Progress reward (moving right)
-        progress = curr_xscroll - self.prev_xscroll
-        if progress > 0:
-            custom_reward += self.progress_coeff * progress
+        # Score reward
+        score_diff = curr_score - self.prev_score
+        if score_diff > 0:
+            custom_reward += self.score_coeff * score_diff
 
         # Death penalty
         if curr_lives < self.prev_lives:
             custom_reward += self.death_penalty
 
-        # Level completion bonus
-        if curr_level > self.prev_level:
-            custom_reward += self.level_bonus
-            if self.reset_round:
-                done = True
-
-        # Game over
-        if curr_lives < 0 or (term and not trunc):
+        # Game over (lives == 0)
+        if curr_lives == 0 or term:
             done = True
 
         # Update previous state
-        self.prev_xscroll = curr_xscroll
+        self.prev_score = curr_score
         self.prev_lives = curr_lives
-        self.prev_level = curr_level
 
         # Normalize reward
         normalized_reward = custom_reward * 0.01

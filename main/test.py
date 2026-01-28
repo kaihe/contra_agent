@@ -24,7 +24,7 @@ from contra_wrapper import ContraWrapper
 # CONFIG
 # =============================================================================
 
-GAME = "Contra-Nes"
+GAME = "ContraForce-Nes-v0"
 STATE = "Level1"
 MODEL_DIR = "trained_models"
 DEFAULT_MODEL = "ppo_contra_final.zip"
@@ -54,18 +54,18 @@ def add_overlay(frame, episode_num, total_episodes, info=None, result=None):
     cv2.putText(frame, text, (x+1, y+1), font, font_scale, shadow_color, thickness)
     cv2.putText(frame, text, (x, y), font, font_scale, color, thickness)
 
-    # Lives and level (top-left)
+    # Lives and score (top-left)
     if info:
         lives = info.get("lives", 0)
-        level = info.get("level", 1)
-        text = f"Lives: {lives} | Level: {level}"
+        score = info.get("score", 0)
+        text = f"Lives: {lives} | Score: {score}"
         x, y = 10, 20
         cv2.putText(frame, text, (x+1, y+1), font, font_scale, shadow_color, thickness)
         cv2.putText(frame, text, (x, y), font, font_scale, color, thickness)
 
     # Result overlay (center)
     if result:
-        result_color = (0, 255, 0) if "Complete" in result else (0, 0, 255)
+        result_color = (0, 0, 255)  # Red for game over
         text_size = cv2.getTextSize(result, font, 1.0, 2)[0]
         x = (frame.shape[1] - text_size[0]) // 2
         y = frame.shape[0] // 2
@@ -130,7 +130,6 @@ def main():
         use_restricted_actions=retro.Actions.FILTERED,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
     )
 
     # Wrap environment
@@ -169,8 +168,7 @@ def main():
 
     # Run episodes
     total_score = 0
-    max_progress = 0
-    levels_completed = 0
+    max_score = 0
     all_frames = []
 
     for episode in range(args.episodes):
@@ -185,7 +183,6 @@ def main():
 
         done = False
         episode_reward = 0
-        episode_progress = 0
         result = None
 
         while not done:
@@ -198,20 +195,9 @@ def main():
             done = terminated or truncated
             episode_reward += reward
 
-            # Track progress
-            xscroll = info.get("xscroll", 0)
-            if xscroll > episode_progress:
-                episode_progress = xscroll
-
-            # Check level completion or death
+            # Check game over
             if done:
-                curr_level = info.get("level", 1)
-                curr_lives = info.get("lives", 0)
-                if curr_lives < 0:
-                    result = "Game Over"
-                else:
-                    result = f"Level {curr_level} Complete!"
-                    levels_completed += 1
+                result = "Game Over"
 
             # Capture frame if recording
             if args.record:
@@ -228,11 +214,12 @@ def main():
                 frame_with_overlay = add_overlay(raw_frame, episode_num, args.episodes, info, result)
                 all_frames.append(frame_with_overlay)
 
-        total_score += info.get("score", 0)
-        if episode_progress > max_progress:
-            max_progress = episode_progress
+        episode_score = info.get("score", 0)
+        total_score += episode_score
+        if episode_score > max_score:
+            max_score = episode_score
 
-        print(f"Episode {episode_num}: {result} | Progress: {episode_progress} | Reward: {episode_reward:.3f}")
+        print(f"Episode {episode_num}: {result} | Score: {episode_score} | Reward: {episode_reward:.3f}")
 
     env.close()
 
@@ -257,8 +244,9 @@ def main():
     print("\n" + "=" * 70)
     print("RESULTS")
     print("=" * 70)
-    print(f"  Levels Completed: {levels_completed}/{args.episodes}")
-    print(f"  Max Progress:     {max_progress}")
+    avg_score = total_score / args.episodes
+    print(f"  Avg Score:        {avg_score:.0f}")
+    print(f"  Max Score:        {max_score}")
     print(f"  Total Score:      {total_score}")
     if args.random:
         print(f"  Agent:            Random")
