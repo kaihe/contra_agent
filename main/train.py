@@ -125,7 +125,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 70)
-    print("Contra Force - PPO Training (Single Life Mode)")
+    print("Contra Force - PPO Training")
     print("=" * 70)
     print(f"  Game:         {GAME}")
     print(f"  State:        {args.state}")

@@ -4,8 +4,8 @@ Contra Force Custom Wrapper for Stable-Baselines3
 
 - Fixed frame skip for all actions
 - Frame stacking with RGB channel extraction
-- Reward based on score and forward movement
-- Episode ends on single death (one life per episode)
+- Reward based on score and forward movement (new max distance only)
+- Episode ends on game over (all lives lost)
 """
 
 import collections
@@ -33,7 +33,7 @@ class ContraWrapper(gym.Wrapper):
 
         # Reward scaling
         self.score_coeff = 1.0  # Reward for score increase
-        self.move_coeff = 1.0  # Reward for reaching new max distance
+        self.move_coeff = 1  # Reward for reaching new max distance
         self.death_penalty = -10.0  # Reduced penalty for dying (was -50)
 
         self.total_timesteps = 0
@@ -174,9 +174,12 @@ class ContraWrapper(gym.Wrapper):
             custom_reward += self.score_coeff * score_diff
             self.episode_score += score_diff
 
-        # Single life mode: reset on any death
+        # Death penalty (but don't end episode until game over)
         if curr_lives < self.prev_lives:
             custom_reward += self.death_penalty
+
+        # Game over: end episode when all lives lost
+        if curr_lives == 0:
             done = True
 
         # Update previous state
