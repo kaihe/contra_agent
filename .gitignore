@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Model files
+*.zip
+*.pkl
+*.pt
+*.pth
+*.h5
+*.onnx
+
+# Training outputs
+trained_models/
+main/trained_models/
+main/recordings/
+checkpoints*/
+
+# Explicitly track tensorboard logs
+!main/logs/
+
+# Generated files
+*.gif
+*.png
+*.jpg
+*.csv
+
+# IDE and tools
+.vscode/
+.idea/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Explicitly track these
+!*.json
+!*.txt
+!*.md
+!main/requirements.txt
