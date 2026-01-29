@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 class ContraWrapper(gym.Wrapper):
     """Custom wrapper for Contra Force NES."""
 
-    def __init__(self, env, reset_round=True, rendering=False, random_start_frames=0):
+    def __init__(self, env, reset_round=True, rendering=False, random_start_frames=0, render_fps=15):
         super().__init__(env)
         self.env = env
 
@@ -58,6 +58,7 @@ class ContraWrapper(gym.Wrapper):
         self.reset_round = reset_round
         self.rendering = rendering
         self.random_start_frames = random_start_frames
+        self.render_delay = 1.0 / render_fps  # Delay per wrapper step
 
         if self.rendering:
             plt.ion()  # Turn on interactive mode
@@ -123,22 +124,22 @@ class ContraWrapper(gym.Wrapper):
         total_reward = 0
         done = False
 
-        for _ in range(self.num_step_frames):
+        for i in range(self.num_step_frames):
             obs, reward, term, trunc, info = self.env.step(action)
             self.frame_stack.append(self._preprocess_frame(obs))
-
-            if self.rendering:
-                # Use Matplotlib for rendering
-                if self.im is None:
-                    self.im = self.ax.imshow(obs)
-                else:
-                    self.im.set_data(obs)
-                self.fig.canvas.flush_events()
-                plt.pause(0.001)
 
             if term or trunc:
                 done = True
                 break
+
+        # Render only the final frame of the skip (controlled by fps)
+        if self.rendering:
+            if self.im is None:
+                self.im = self.ax.imshow(obs)
+            else:
+                self.im.set_data(obs)
+            self.fig.canvas.flush_events()
+            plt.pause(self.render_delay)
 
         # Get current state
         curr_score = info.get("score", 0)

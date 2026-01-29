@@ -137,7 +137,8 @@ def main():
         base_env,
         reset_round=True,
         rendering=args.render,
-        random_start_frames=args.random_start
+        random_start_frames=args.random_start,
+        render_fps=args.fps
     )
 
     # Load model
@@ -236,9 +237,13 @@ def main():
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if len(frame.shape) == 3 else frame
             frames_array.append(frame_rgb)
 
-        imageio.mimsave(output_path, frames_array, fps=args.fps)
+        writer = imageio.get_writer(output_path, fps=args.fps, codec='libx264',
+                                     output_params=['-pix_fmt', 'yuv420p'])
+        for frame in frames_array:
+            writer.append_data(frame)
+        writer.close()
         file_size = os.path.getsize(output_path) / (1024 * 1024)
-        print(f"Saved: {output_path} ({file_size:.1f} MB)")
+        print(f"Saved: {output_path} ({file_size:.1f} MB, fps={args.fps})")
 
     # Print summary
     print("\n" + "=" * 70)
