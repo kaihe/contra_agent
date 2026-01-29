@@ -32,9 +32,13 @@ class ContraWrapper(gym.Wrapper):
         self.num_step_frames = 4
 
         # Reward scaling
-        self.score_coeff = 1.0  # Reward for score increase
-        self.move_coeff = 1  # Reward for reaching new max distance
-        self.death_penalty = -10.0  # Reduced penalty for dying (was -50)
+        self.move_coeff = 1.0  # Reward for reaching new max distance
+        self.stall_penalty = -0.5  # Penalty for not making progress
+        self.death_penalty = -10.0  # Penalty for dying
+
+        # Stall detection: penalize if no new max distance within N steps
+        self.stall_threshold = 24  # Steps without progress before penalty
+        self.steps_since_progress = 0
 
         self.total_timesteps = 0
 
@@ -89,6 +93,7 @@ class ContraWrapper(gym.Wrapper):
         self.prev_x_pos = info.get("x_pos", 0)
         self.cumulative_x = 0  # Start at 0, accumulate movement
         self.max_x_reached = 0  # Track furthest cumulative point
+        self.steps_since_progress = 0
         self.total_timesteps = 0
 
         # Reset episode stats
@@ -162,17 +167,23 @@ class ContraWrapper(gym.Wrapper):
         self.cumulative_x += x_diff
 
         # Movement reward: only reward NEW maximum distance reached
-        # This prevents oscillation exploit - going back and forth gives no reward
         if self.cumulative_x > self.max_x_reached:
             progress = self.cumulative_x - self.max_x_reached
             custom_reward += self.move_coeff * progress
             self.episode_distance += progress
             self.max_x_reached = self.cumulative_x
+            self.steps_since_progress = 0  # Reset stall counter
+        else:
+            self.steps_since_progress += 1
 
-        # Score reward
+        # Stall penalty: punish if no forward progress for too long
+        # This prevents farming enemies by going back and forth
+        if self.steps_since_progress >= self.stall_threshold:
+            custom_reward += self.stall_penalty
+
+        # Score reward (small, secondary to movement)
         score_diff = curr_score - self.prev_score
         if score_diff > 0:
-            custom_reward += self.score_coeff * score_diff
             self.episode_score += score_diff
 
         # Death penalty (but don't end episode until game over)
