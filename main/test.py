@@ -12,6 +12,7 @@ Usage:
 """
 
 import os
+import gzip
 
 import cv2
 import numpy as np
@@ -19,6 +20,39 @@ import stable_retro as retro
 from stable_baselines3 import PPO
 
 from contra_wrapper import ContraWrapper
+
+
+# =============================================================================
+# SAVE STATE
+# =============================================================================
+
+def save_emulator_state(base_env):
+    """Save current emulator state to a .state file via file dialog."""
+    import tkinter as tk
+    from tkinter import filedialog
+
+    # Get the game's state directory as default location
+    game_path = os.path.dirname(retro.data.get_file_path(GAME, "data.json"))
+    default_dir = game_path if os.path.isdir(game_path) else os.getcwd()
+
+    root = tk.Tk()
+    root.withdraw()
+    filepath = filedialog.asksaveasfilename(
+        initialdir=default_dir,
+        title="Save Emulator State",
+        defaultextension=".state",
+        filetypes=[("Retro State", "*.state"), ("All Files", "*.*")],
+    )
+    root.destroy()
+
+    if not filepath:
+        print("Save cancelled.")
+        return
+
+    state_data = base_env.em.get_state()
+    with gzip.open(filepath, "wb") as f:
+        f.write(state_data)
+    print(f"State saved: {filepath}")
 
 # =============================================================================
 # CONFIG
@@ -31,7 +65,7 @@ DEFAULT_MODEL = "ppo_contra_final.zip"
 OUTPUT_DIR = "recordings"
 
 # NES runs at 60fps, with 4-frame skip = 15 actions per second
-DEFAULT_FPS = 15
+DEFAULT_FPS = 90
 
 
 # =============================================================================
@@ -138,8 +172,19 @@ def main():
         reset_round=True,
         rendering=args.render,
         random_start_frames=args.random_start,
-        render_fps=args.fps
+        render_fps=args.fps,
     )
+
+    # Add save button to the render window
+    if args.render:
+        import matplotlib.pyplot as plt
+        from matplotlib.widgets import Button
+
+        fig = env.fig
+        # Shrink main axes to make room for button on the right
+        ax_button = fig.add_axes([0.85, 0.02, 0.12, 0.05])
+        save_btn = Button(ax_button, 'Save State')
+        save_btn.on_clicked(lambda event: save_emulator_state(base_env))
 
     # Load model
     model = None
@@ -184,6 +229,7 @@ def main():
 
         done = False
         episode_reward = 0
+        episode_actions = 0
         result = None
 
         while not done:
@@ -195,6 +241,7 @@ def main():
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             episode_reward += reward
+            episode_actions += 1
 
             # Check game over
             if done:
@@ -216,11 +263,12 @@ def main():
                 all_frames.append(frame_with_overlay)
 
         episode_score = info.get("score", 0)
+        episode_distance = info.get("episode_distance", 0)
         total_score += episode_score
         if episode_score > max_score:
             max_score = episode_score
 
-        print(f"Episode {episode_num}: {result} | Score: {episode_score} | Reward: {episode_reward:.3f}")
+        print(f"Episode {episode_num}: {result} | Score: {episode_score} | Reward: {episode_reward:.3f} | Actions: {episode_actions} | Distance: {episode_distance}")
 
     env.close()
 
@@ -237,13 +285,9 @@ def main():
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if len(frame.shape) == 3 else frame
             frames_array.append(frame_rgb)
 
-        writer = imageio.get_writer(output_path, fps=args.fps, codec='libx264',
-                                     output_params=['-pix_fmt', 'yuv420p'])
-        for frame in frames_array:
-            writer.append_data(frame)
-        writer.close()
+        imageio.mimsave(output_path, frames_array, fps=args.fps)
         file_size = os.path.getsize(output_path) / (1024 * 1024)
-        print(f"Saved: {output_path} ({file_size:.1f} MB, fps={args.fps})")
+        print(f"Saved: {output_path} ({file_size:.1f} MB)")
 
     # Print summary
     print("\n" + "=" * 70)

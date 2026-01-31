@@ -4,12 +4,16 @@ Contra Force Custom Wrapper for Stable-Baselines3
 
 - Fixed frame skip for all actions
 - Frame stacking with RGB channel extraction
-- Reward based on score and forward movement (new max distance only)
+- Reward structure (total range clamped to -10..10):
+  - Speed (tanh): y = 2*tanh(0.8*(speed-1)), range (-2, 2)
+  - Score (exponential): approaches max 8, fast change in (0, 50)
+  - Death: fixed -8
 - Episode ends on game over (all lives lost)
 """
 
 import collections
 import time
+import math
 
 import gymnasium as gym
 import numpy as np
@@ -31,23 +35,20 @@ class ContraWrapper(gym.Wrapper):
         # Frame skip: repeat action for this many frames
         self.num_step_frames = 4
 
-        # Reward scaling
-        self.move_coeff = 1.0  # Reward for reaching new max distance
-        self.stall_penalty = -0.5  # Penalty for not making progress
-        self.death_penalty = -10.0  # Penalty for dying
-
-        # Stall detection: penalize if no new max distance within N steps
-        self.stall_threshold = 24  # Steps without progress before penalty
-        self.steps_since_progress = 0
+        # Reward parameters
+        self.death_penalty = -8.0       # Fixed death penalty
+        self.score_decay_rate = 0.05    # Controls exponential curve for score (fast change in 0-50)
+        self.score_max_reward = 8.0     # Max score reward (asymptote)
 
         self.total_timesteps = 0
 
         # Track previous state
         self.prev_score = 0
-        self.prev_lives = 2  # Contra Force starts with 2 lives
+        self.prev_lives = 2
         self.prev_x_pos = 0
-        self.cumulative_x = 0  # Cumulative x position (handles screen wrap)
-        self.max_x_reached = 0  # Track furthest cumulative point reached
+        self.wrap_count = 0
+        self.max_x_reached = 0
+        self.prev_max_x = 0
 
         # Episode stats for logging
         self.episode_distance = 0
@@ -84,6 +85,33 @@ class ContraWrapper(gym.Wrapper):
             [self.frame_stack[i * 3 + 2][:, :, i % 3] for i in range(3)], axis=-1
         )
 
+    def _calculate_speed_reward(self, speed):
+        """
+        Calculate speed reward using tanh curve.
+        y = 2 * tanh(0.8 * (speed - 1.0))
+        Output range: (-2, 2)
+        Key points:
+          speed=-2 -> ~-1.8
+          speed= 0 -> ~-1.3 (negative, penalizes stalling)
+          speed= 2 -> ~+1.3
+          speed= 5 -> ~+2.0 (near max)
+        """
+        return 2.0 * np.tanh(0.8 * (speed - 1.0))
+
+    def _calculate_score_reward(self, score_diff):
+        """
+        Calculate score reward using exponential formula.
+        Approaches max value of 2 asymptotically.
+        Changes fast in range (0, 50).
+        Formula: 2 * (1 - exp(-score_diff * decay_rate))
+        """
+        if score_diff <= 0:
+            return 0.0
+
+        # Exponential saturation: fast rise for small values, asymptotes at max
+        reward = self.score_max_reward * (1 - math.exp(-score_diff * self.score_decay_rate))
+        return reward
+
     def reset(self, **kwargs):
         observation, info = self.env.reset(**kwargs)
 
@@ -91,9 +119,9 @@ class ContraWrapper(gym.Wrapper):
         self.prev_score = info.get("score", 0)
         self.prev_lives = info.get("lives", 2)
         self.prev_x_pos = info.get("x_pos", 0)
-        self.cumulative_x = 0  # Start at 0, accumulate movement
-        self.max_x_reached = 0  # Track furthest cumulative point
-        self.steps_since_progress = 0
+        self.wrap_count = 0
+        self.max_x_reached = self.prev_x_pos
+        self.prev_max_x = self.prev_x_pos
         self.total_timesteps = 0
 
         # Reset episode stats
@@ -115,7 +143,6 @@ class ContraWrapper(gym.Wrapper):
                 observation, _, _, _, info = self.env.step(no_op)
                 self.frame_stack.append(self._preprocess_frame(observation))
                 if self.rendering:
-                    # Use Matplotlib for rendering
                     if self.im is None:
                         self.im = self.ax.imshow(observation)
                     else:
@@ -126,7 +153,6 @@ class ContraWrapper(gym.Wrapper):
         return self._stack_observation(), info
 
     def step(self, action):
-        total_reward = 0
         done = False
 
         for i in range(self.num_step_frames):
@@ -151,42 +177,42 @@ class ContraWrapper(gym.Wrapper):
         curr_lives = info.get("lives", self.prev_lives)
         curr_x_pos = info.get("x_pos", self.prev_x_pos)
 
-        self.total_timesteps += self.num_step_frames
+        self.total_timesteps += 1
 
-        # Calculate custom reward
-        custom_reward = 0
+        # Calculate absolute x position (handle wrap at 256)
+        diff = curr_x_pos - self.prev_x_pos
+        if diff < -128:
+            self.wrap_count += 1  # Wrapped forward
+        elif diff > 128:
+            self.wrap_count -= 1  # Wrapped backward
 
-        # Calculate movement delta (handle screen wrap: x_pos is 0-255)
-        x_diff = curr_x_pos - self.prev_x_pos
-        if x_diff < -100:  # Wrapped forward (e.g., 250 -> 10)
-            x_diff += 256
-        elif x_diff > 100:  # Wrapped backward (e.g., 10 -> 250)
-            x_diff -= 256
+        abs_x = self.wrap_count * 256 + curr_x_pos
 
-        # Update cumulative position (tracks total forward progress)
-        self.cumulative_x += x_diff
-
-        # Movement reward: only reward NEW maximum distance reached
-        if self.cumulative_x > self.max_x_reached:
-            progress = self.cumulative_x - self.max_x_reached
-            custom_reward += self.move_coeff * progress
+        # Update max_x if we've progressed
+        if abs_x > self.max_x_reached:
+            progress = abs_x - self.max_x_reached
             self.episode_distance += progress
-            self.max_x_reached = self.cumulative_x
-            self.steps_since_progress = 0  # Reset stall counter
-        else:
-            self.steps_since_progress += 1
+            self.max_x_reached = abs_x
 
-        # Stall penalty: punish if no forward progress for too long
-        # This prevents farming enemies by going back and forth
-        if self.steps_since_progress >= self.stall_threshold:
-            custom_reward += self.stall_penalty
+        # Speed = max_x diff between current and previous step
+        speed = self.max_x_reached - self.prev_max_x
+        self.prev_max_x = self.max_x_reached
 
-        # Score reward (small, secondary to movement)
+        # === CALCULATE REWARDS ===
+        custom_reward = 0.0
+
+        # Speed reward: tanh curve, range (-2, 8)
+        speed_reward = self._calculate_speed_reward(speed)
+        custom_reward += speed_reward
+
+        # Score reward: exponential, max 2
         score_diff = curr_score - self.prev_score
         if score_diff > 0:
             self.episode_score += score_diff
+            score_reward = self._calculate_score_reward(score_diff)
+            custom_reward += score_reward
 
-        # Death penalty (but don't end episode until game over)
+        # Death penalty: fixed -8
         if curr_lives < self.prev_lives:
             custom_reward += self.death_penalty
 
@@ -199,17 +225,16 @@ class ContraWrapper(gym.Wrapper):
         self.prev_lives = curr_lives
         self.prev_x_pos = curr_x_pos
 
-        # Normalize reward
-        normalized_reward = custom_reward * 0.01
-        self.episode_reward += normalized_reward
+        self.episode_reward += custom_reward
 
         # Add episode stats to info for logging (on episode end)
         if done:
             info["episode_distance"] = self.episode_distance
             info["episode_score"] = self.episode_score
             info["episode_reward"] = self.episode_reward
+            info["episode_steps"] = self.total_timesteps
 
         if not self.reset_round:
             done = False
 
-        return self._stack_observation(), normalized_reward, done, False, info
+        return self._stack_observation(), custom_reward, done, False, info
