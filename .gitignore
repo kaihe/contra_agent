@@ -1,0 +1,22 @@
+# Model weights
+*.zip
+*.pkl
+*.pt
+*.pth
+*.onnx
+
+# Media
+*.gif
+*.mp4
+*.avi
+
+# Logs
+logs/
+*.tfevents.*
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE / local
+.claude/
