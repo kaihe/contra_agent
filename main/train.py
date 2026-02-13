@@ -209,14 +209,13 @@ def main():
     )
 
     # Learning rate and clip range schedules
-    lr_schedule = linear_schedule(1e-4, 2e-6)
     clip_range_schedule = linear_schedule(0.2, 0.05)
 
     if args.resume:
         # Load existing model
         print(f"Loading model from {args.resume}")
         custom_objects = {
-            "learning_rate": lr_schedule,
+            "learning_rate": 1e-4,
             "clip_range": clip_range_schedule,
             "n_steps": BATCH_SIZE,
         }
@@ -224,7 +223,7 @@ def main():
     else:
         # Create new model
         model = PPO(
-            "CnnPolicy",
+            "MultiInputPolicy",
             env,
             device="cuda",
             verbose=0,
@@ -233,7 +232,7 @@ def main():
             n_epochs=10,
             gamma=0.9,
             ent_coef=0.01,
-            learning_rate=lr_schedule,
+            learning_rate=1e-4,
             clip_range=clip_range_schedule,
             tensorboard_log=LOG_DIR,
         )

@@ -3,11 +3,12 @@ Contra (NES) Custom Wrapper for Stable-Baselines3
 ==================================================
 
 Single wrapper: ContraWrapper
-  - Discrete 7-action space (NOOP, Fire, Left, Right, Up, Down, Jump)
-  - Frame skip (4x) + no-op release frame = 5 inner steps per agent decision
+  - MultiBinary(6) action space: [B, UP, DOWN, LEFT, RIGHT, A]
+  - Sticky actions: button state persists for `skip` frames (no forced release)
+  - Dict observation: {"image": (84,84,4), "prev_action": MultiBinary(6)}
   - Reward shaping: position delta, score delta, death penalty, terminal bonuses
   - Max-pool last 2 raw frames (flicker removal)
-  - Grayscale + resize to 84x84 + 4-frame stack -> (84, 84, 4)
+  - Grayscale + resize to 84x84 + 4-frame stack
   - Optional monitor recording of raw frames
 """
 
@@ -16,21 +17,15 @@ import gymnasium as gym
 import numpy as np
 
 
-# NES buttons: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
-# Index:        0  1     2       3      4   5     6     7      8
-#                                                                   Nick
-ACTION_TABLE = [
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: NOOP       N
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 1: Fire (B)   F
-    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 2: Left       L
-    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 3: Right      R
-    [0, 0, 0, 0, 1, 0, 0, 0, 0],  # 4: Up         U
-    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 5: Down       D
-    [0, 0, 0, 0, 0, 0, 0, 0, 1],  # 6: Jump (A)   J
-    [0, 0, 0, 0, 0, 0, 0, 1, 1],  # 7: Jump+Right JR
-    [0, 0, 0, 0, 0, 0, 1, 0, 1],  # 8: Jump+Left  JL
-]
-ACTION_NAMES = ["N", "F", "L", "R", "U", "D", "J", "JR", "JL"]
+# Agent buttons: [B, UP, DOWN, LEFT, RIGHT, A]
+# Index:          0  1    2     3     4      5
+NUM_BUTTONS = 6
+BUTTON_NAMES = ["B", "UP", "DOWN", "LEFT", "RIGHT", "A"]
+
+# Mapping from agent buttons (6) to NES buttons (9)
+# NES layout: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
+#              0  1     2       3      4   5     6     7      8
+AGENT_TO_NES = [0, 4, 5, 6, 7, 8]  # agent index -> NES index
 
 
 # =============================================================================
@@ -90,6 +85,14 @@ def process_frame(frame):
     return np.zeros((1, 84, 84), dtype=np.uint8)
 
 
+def agent_to_nes(action):
+    """Convert 6-button agent action to 9-button NES action."""
+    nes = np.zeros(9, dtype=np.int8)
+    for i, nes_idx in enumerate(AGENT_TO_NES):
+        nes[nes_idx] = action[i]
+    return nes
+
+
 # =============================================================================
 # UNIFIED WRAPPER: REWARD SHAPING + FRAME SKIP + STACKING
 # =============================================================================
@@ -98,20 +101,20 @@ class ContraWrapper(gym.Wrapper):
     """Single wrapper combining reward shaping, frame skip, and frame stacking.
 
     Each agent step:
-      1. Map discrete action to NES multi-binary buttons
-      2. Repeat action for `skip` emulator frames (reward shaping each frame)
-      3. Send one no-op frame for button release
-      4. Max-pool last 2 raw RGB frames (flicker removal)
-      5. Grayscale + resize to 84x84, push into frame stack
+      1. Convert MultiBinary(6) action to NES 9-button layout
+      2. Hold buttons for `skip` emulator frames (sticky — no forced release)
+      3. Max-pool last 2 raw RGB frames (flicker removal)
+      4. Grayscale + resize to 84x84, push into frame stack
 
-    Observation: (84, 84, stack) uint8 channels-last for SB3 CnnPolicy.
+    Observation: Dict with:
+      - "image": (84, 84, stack) uint8 channels-last
+      - "prev_action": MultiBinary(6) — previous step's button state
     """
 
     def __init__(self, env, monitor=None, reset_round=True, random_start_frames=0,
                  warmup_frames=120, skip=4, stack=4):
         super().__init__(env)
         self._no_op = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
-        self._action_table = np.array(ACTION_TABLE, dtype=env.action_space.dtype)
         self.monitor = monitor
         self.reset_round = reset_round
         self.random_start_frames = random_start_frames
@@ -119,14 +122,18 @@ class ContraWrapper(gym.Wrapper):
         self.skip = skip
         self.stack = stack
 
-        # Discrete action space
-        self.action_space = gym.spaces.Discrete(len(ACTION_TABLE))
+        # MultiBinary action space: 6 useful NES buttons
+        self.action_space = gym.spaces.MultiBinary(NUM_BUTTONS)
 
-        # Frame stack: (stack, 84, 84) internal, exposed as (84, 84, stack)
+        # Dict observation: image + previous action
         self.states = np.zeros((stack, 84, 84), dtype=np.uint8)
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(84, 84, stack), dtype=np.uint8
-        )
+        self.prev_action = np.zeros(NUM_BUTTONS, dtype=np.int8)
+        self.observation_space = gym.spaces.Dict({
+            "image": gym.spaces.Box(
+                low=0, high=255, shape=(84, 84, stack), dtype=np.uint8
+            ),
+            "prev_action": gym.spaces.MultiBinary(NUM_BUTTONS),
+        })
 
         # Reward tracking state
         self.prev_xscroll = 0
@@ -136,7 +143,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_x_reached = 0
         self.total_timesteps = 0
         self.max_episode_steps = 2000
-        self.idle_steps = 0  # consecutive steps with no xscroll change
+        self.idle_steps = 0
 
         # Episode stats for logging
         self.episode_score = 0
@@ -146,8 +153,11 @@ class ContraWrapper(gym.Wrapper):
         self.episode_end_reason = ""
 
     def _get_obs(self):
-        """Return (84, 84, stack) channels-last."""
-        return np.transpose(self.states, (1, 2, 0))
+        """Return Dict observation."""
+        return {
+            "image": np.transpose(self.states, (1, 2, 0)),
+            "prev_action": self.prev_action.copy(),
+        }
 
     def _compute_reward(self, info):
         """Compute shaped reward from a single emulator frame's info."""
@@ -159,7 +169,7 @@ class ContraWrapper(gym.Wrapper):
 
         self.episode_score = curr_score
 
-        # Idle detection: max_x_reached not pushed for 10 steps
+        # Idle detection: max_x_reached not pushed for 50 steps
         if curr_xscroll > self.max_x_reached:
             self.idle_steps = 0
             self.max_x_reached = curr_xscroll
@@ -177,7 +187,7 @@ class ContraWrapper(gym.Wrapper):
 
             # Score reward: positive delta only, around 100 points
             score_delta = curr_score - self.prev_score
-            score_reward = max(score_delta, 0) 
+            score_reward = max(score_delta, 0)
             self.episode_score_reward += score_reward
             reward += score_reward
 
@@ -202,6 +212,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_x_reached = self.prev_xscroll
         self.total_timesteps = 0
         self.idle_steps = 0
+        self.prev_action = np.zeros(NUM_BUTTONS, dtype=np.int8)
 
         self.episode_score = 0
         self.episode_reward = 0
@@ -234,14 +245,14 @@ class ContraWrapper(gym.Wrapper):
         return self._get_obs(), info
 
     def step(self, action):
-        multi_action = self._action_table[action]
-        actions = [multi_action] * self.skip + [self._no_op]
+        # Convert agent 6-button action to NES 9-button layout
+        nes_action = agent_to_nes(action)
         last_two = [None, None]
         done = False
 
-        # Run action frames + 1 no-op release frame
-        for act in actions:
-            state, _, term, trunc, info = self.env.step(act)
+        # Sticky: hold the same button state for `skip` frames (no forced release)
+        for _ in range(self.skip):
+            state, _, term, trunc, info = self.env.step(nes_action)
             if self.monitor:
                 self.monitor.record(state)
             last_two[0], last_two[1] = last_two[1], state
@@ -256,7 +267,7 @@ class ContraWrapper(gym.Wrapper):
         if not done and self.total_timesteps >= self.max_episode_steps:
             done = True
             self.episode_end_reason = "time_out"
-            # penalty larger than fight 3 lives 
+            # penalty larger than fight 3 lives
             reward -= 100
         elif done:
             if info.get("lives", 0) > 0:
@@ -270,6 +281,9 @@ class ContraWrapper(gym.Wrapper):
         pooled = np.maximum(last_two[0], last_two[1]) if last_two[0] is not None else last_two[1]
         self.states[:-1] = self.states[1:]
         self.states[-1] = process_frame(pooled)[0]
+
+        # Update prev_action for next step's observation
+        self.prev_action = np.array(action, dtype=np.int8)
 
         if done:
             info["episode_max_x"] = self.max_x_reached
