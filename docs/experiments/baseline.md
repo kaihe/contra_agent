@@ -131,3 +131,17 @@ The fundamental problem is that **the agent cannot plan for the future**.
 2. **No "don't pick up" action:** In Contra, weapon pickup is automatic on contact. The only way to *avoid* a weapon is to jump over the capsule or not move toward it. This requires the agent to understand that a specific spatial region should be avoided — a far more abstract concept than reacting to immediate threats.
 
 3. **Temporal credit assignment:** The negative consequence (failing the boss) occurs hundreds of steps after the weapon pickup. Standard PPO with γ=0.99 struggles to propagate this long-horizon signal back to the critical pickup moment.
+
+---
+
+## TODO: Next Experiment
+
+**Goal:** Beat the Level 1 boss.
+{: .fs-5 }
+
+Two changes combined in the next training run:
+
+1. **Constant-fire action space** — Add `B=1` (fire) to all movement actions so the agent always fires while moving. This enables run-and-gun, which is essential for Contra gameplay and should dramatically increase DPS during the boss fight.
+
+2. **Boss-area save state** — Create a new save state near the boss fight and train with `--state Level1 Level1_Boss` so the agent gets ~50% of episodes starting near the boss. This addresses the lack of boss-fight training data in the baseline.
+

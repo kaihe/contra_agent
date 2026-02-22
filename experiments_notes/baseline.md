@@ -109,3 +109,16 @@ The fundamental problem is that **the agent cannot plan for the future**.
 ## Gameplay Recording
 
 GIF: `../main/recordings/no_fire_final.gif`
+
+---
+
+## TODO: Next Experiment
+
+**Goal:** Beat the Level 1 boss.
+
+Two changes combined in the next training run:
+
+1. **Constant-fire action space** — Add `B=1` (fire) to all movement actions so the agent always fires while moving. This enables run-and-gun, which is essential for Contra gameplay and should dramatically increase DPS during the boss fight.
+
+2. **Boss-area save state** — Create a new save state near the boss fight and train with `--state Level1 Level1_Boss` so the agent gets ~50% of episodes starting near the boss. This addresses the lack of boss-fight training data in the baseline.
+
