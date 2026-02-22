@@ -10,7 +10,6 @@ Usage:
 
 import os
 import gzip
-import shutil
 
 import warnings
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
@@ -29,7 +28,7 @@ from contra_wrapper import create_env
 # CONFIG
 # =============================================================================
 
-NUM_ENV = 16
+NUM_ENV = 32
 BATCH_SIZE = 2048
 LOG_DIR = "logs"
 SAVE_DIR = "trained_models"
@@ -43,6 +42,23 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 # =============================================================================
 # CUSTOM CALLBACK FOR TENSORBOARD LOGGING
 # =============================================================================
+
+class EntropyScheduleCallback(BaseCallback):
+    """Custom callback for scheduling entropy coefficient during training."""
+
+    def __init__(self, entropy_schedule, verbose=0):
+        super().__init__(verbose)
+        self.entropy_schedule = entropy_schedule
+
+    def _on_step(self) -> bool:
+        # Update entropy coefficient based on training progress
+        # progress_remaining goes from 1.0 (start) to 0.0 (end)
+        progress_remaining = 1.0 - (self.num_timesteps / self.model._total_timesteps)
+        self.model.ent_coef = self.entropy_schedule(progress_remaining)
+        # Log current entropy coefficient
+        self.logger.record("train/ent_coef", self.model.ent_coef)
+        return True
+
 
 class TensorboardCallback(BaseCallback):
     """Custom callback for logging episode stats to TensorBoard."""
@@ -100,13 +116,21 @@ class TensorboardCallback(BaseCallback):
 # =============================================================================
 
 def linear_schedule(initial_value, final_value=0.0):
-    """Linear interpolation between initial_value and final_value."""
+    """Linear interpolation between initial_value and final_value.
+
+    Args:
+        initial_value: Starting value (at progress=1.0, beginning of training)
+        final_value: Ending value (at progress=0.0, end of training)
+
+    Note: progress goes from 1.0 -> 0.0 during training
+    """
     if isinstance(initial_value, str):
         initial_value = float(initial_value)
         final_value = float(final_value)
         assert initial_value > 0.0
 
     def scheduler(progress):
+        # progress: 1.0 at start -> 0.0 at end
         return final_value + progress * (initial_value - final_value)
 
     return scheduler
@@ -208,8 +232,10 @@ def main():
          for i in range(NUM_ENV)]
     )
 
-    # Learning rate and clip range schedules
+    # Learning rate, clip range, and entropy schedules
     clip_range_schedule = linear_schedule(0.2, 0.05)
+    # Start with high exploration (0.1), decay to lower exploration (0.005)
+    entropy_schedule = linear_schedule(0.1, 0.005)
 
     if args.resume:
         # Load existing model
@@ -220,18 +246,20 @@ def main():
             "n_steps": BATCH_SIZE,
         }
         model = PPO.load(args.resume, env=env, device="cuda", custom_objects=custom_objects)
+        # Set initial entropy (will be updated by EntropyScheduleCallback)
+        model.ent_coef = 0.1
     else:
         # Create new model
         model = PPO(
-            "MultiInputPolicy",
+            "CnnPolicy",
             env,
             device="cuda",
             verbose=0,
-            n_steps=128,
+            n_steps=BATCH_SIZE,
             batch_size=BATCH_SIZE,
             n_epochs=10,
-            gamma=0.9,
-            ent_coef=0.01,
+            gamma=0.99,
+            ent_coef=0.1,  # Initial value (will be scheduled by callback)
             learning_rate=1e-4,
             clip_range=clip_range_schedule,
             tensorboard_log=LOG_DIR,
@@ -244,12 +272,13 @@ def main():
         save_path=SAVE_DIR,
         name_prefix=args.name,
     )
+    entropy_callback = EntropyScheduleCallback(entropy_schedule)
     tensorboard_callback = TensorboardCallback()
 
     # Training
     model.learn(
         total_timesteps=args.timesteps,
-        callback=[checkpoint_callback, tensorboard_callback],
+        callback=[checkpoint_callback, entropy_callback, tensorboard_callback],
         tb_log_name=args.name,
         progress_bar=True,
     )

@@ -10,6 +10,9 @@
 *.mp4
 *.avi
 
+# But allow docs assets (for GitHub Pages)
+!docs/assets/**/*.gif
+
 # Logs
 logs/
 *.tfevents.*

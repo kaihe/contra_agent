@@ -10,6 +10,9 @@
 - `lives`: Number of lives remaining (starts at 2)
 - `score`: Current score (main reward signal)
 
+## Import Reference
+- lexicographic : technique described in paper <learnfun & playfun: A general technique for automating NES games>
+
 ## Key Files
 - `main/train.py`: Training script with PPO
 - `main/test.py`: Testing and recording script
