@@ -22,33 +22,30 @@ nav_order: 4
 
 ---
 
-## 1. Validating the Action Space First
-Before embarking on long and costly RL training runs, we needed a way to perform a **quick check of the action space**. Our earlier RL agent in the Boss Fight Mix experiment suffered because it got stuck in bad states (e.g., releasing the B button by accident). We wanted a fast, algorithmic simulation to spot action space bugs immediately without waiting for PPO convergence.
+## 1. Validating Action Space
+- **Goal:** Quick algorithmic check to validate action space before costly RL training.
+- **Why:** Avoid bugs like the "B-button release" issue found in prior experiments.
 
-## 2. Stealing Ideas: Learnfun & Playfun → Monte Carlo
-We drew inspiration from Tom Murphy's famous **Learnfun/Playfun** algorithm, which solved NES games using lexicographic reward ranking and greedy search. However, Contra has a highly delayed reward structure (especially dodges). A greedy 1-step lookahead couldn't foresee a bullet that was 60 frames away.
+## 2. Playfun vs. Monte Carlo
+- **Concept:** Based on Tom Murphy's greedy "Learnfun/Playfun" algorithm.
+- **Problem:** Greedy 1-step search fails in Contra due to delayed rewards (e.g., bullet hits 60 frames later).
+- **Solution:** Swapped exhaustive 1-step search for **256 random 16-action Monte Carlo rollouts**.
+- **Backtracking:** If all 256 futures result in death, it logs the state as an inescapable trap and dynamically **rewinds time** to find an uncorrupted timeline.
 
-To fix this, we modified the Playfun idea into a **Monte Carlo Search**:
-- Instead of exhausting every 1-step action, we evaluate **256 random future rollouts**.
-- We paired this "long sight" algorithm with the "time-travel" backtracking mechanic from Playfun. If all 256 random futures end in death, the agent realizes the *committed* root state was an inescapable bullet trap, and it instantly rewinds time dynamically to change the timeline and avoid the fatal sequence.
-
-## 3. The Need for Deep Rollouts
-To make Monte Carlo Search work in a delayed-reward environment like Contra, we needed to roll out "a little bit further" so that the result of a current action (like a bullet collision) is accurately reflected as a penalty.
-- We set the rollout length to **16 actions** (where each action is skipped 4 frames), equating to a **64-frame lookahead**. This gave the agent enough foresight to spot enemy bullets and avoid them.
+## 3. Deep Rollouts
+- **Lookahead:** Rollouts consist of 16 actions (skipped 4 frames each), giving the agent a **64-frame lookahead** window to spot incoming enemy bullets.
 
 ## 4. Why it Fails at the Boss
-This Monte Carlo tracking worked beautifully for navigating the early game! The continuous influx of distance (x-scroll) and score points made evaluating rollouts easy. 
+- **Early Game:** Excels because of constant score/x-scroll micro-rewards.
+- **Boss Fight:** Fails because boss targets have multi-HP. A random 16-action sequence rarely destroys a boss target, so the sequence naturally receives **no immediate score reward**. The agent cannot logically deduce that shooting the boss is working.
 
-However, **it didn't work for the boss fight**. 
-The Contra Level 1 boss has three core targets. The lone shooter on the top is easy to kill and gave points. But the other two targets require *multiple hits* to destroy. A purely random 16-action rollout sequence might randomly shoot the boss core once or twice, but the target wouldn't die. Consequently, **the rollout would receive no score reward**. The agent had absolutely no way of knowing that shooting the boss was "working" based on our current score and distance reward system!
-
-## 5. The Silver Lining: A Fantastic Test Bed
-While it couldn't quite beat the boss, the incredible news is that we now have a **highly effective, rapid test method for our action table**. It can automatically play the game in seconds, allowing us to debug our physics, action mappings, and emulator states. 
+## 5. Silver Lining: The Perfect Action Tester
+- **Outcome:** We successfully built a rapid testing framework. It can auto-play the base game and expose physics/action mapping bugs instantly.
 
 ### Gameplay Recording
-Below is the agent using the Monte Carlo backtrack search algorithm against the boss state. Watch it carefully dodge and backtrack!
+Below is the agent using the Monte Carlo backtrack search algorithm, starting from the level 1 beginning:
 
-![Monte Carlo Boss Fight]({{ site.baseurl }}/assets/recordings/mc_backtrack_Level1_x3048_step921.gif)
+![Monte Carlo Run]({{ site.baseurl }}/assets/recordings/mc_backtrack_Level1_x0_step1.gif)
 
 ## Next Steps
-We need to rework the reward system—possibly finding a way to read boss health from the RAM so the agent receives micro-rewards for landing individual shots on multi-HP targets.
+- Implement boss-health memory scraping for micro-rewards on successful multi-HP target hits.
