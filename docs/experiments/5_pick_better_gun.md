@@ -1,11 +1,11 @@
 ---
 layout: default
-title: "4. Pick Better Gun"
+title: "5. Pick Better Gun"
 parent: Experiments
-nav_order: 4
+nav_order: 5
 ---
 
-# 4. Pick Better Gun
+# 5. Pick Better Gun
 {: .no_toc }
 
 **Date:** 2026-02-23 · **Type:** Action Space Investigation
