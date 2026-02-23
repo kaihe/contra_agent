@@ -4,13 +4,14 @@ Contra Force – Game State Inspector
 
 Runs a trained model for one episode, captures every agent step's raw frame
 with metadata, and opens an interactive matplotlib navigator (left/right
-arrow keys).
+arrow keys). Press 'S' to save the emulator state at the current frame.
 
 Usage:
     python inspect_model.py --model ../main/trained_models/ppo_contra_final.zip
 """
 
 import argparse
+import gzip
 import os
 import sys
 
@@ -25,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "main"))
 import stable_retro as retro
 from stable_baselines3 import PPO
 
-from contra_wrapper import ACTION_NAMES, ContraWrapper
+from contra_wrapper import ACTION_NAMES, ContraWrapper, load_config_from_model, apply_config
 
 # =============================================================================
 # CONSTANTS
@@ -33,6 +34,7 @@ from contra_wrapper import ACTION_NAMES, ContraWrapper
 
 GAME = "Contra-Nes"
 STATE = "Level1"
+STATES_DIR = os.path.join(os.path.dirname(__file__), "..", "main", "states")
 
 
 # =============================================================================
@@ -41,6 +43,12 @@ STATE = "Level1"
 
 def run_episode(model_path: str) -> list[dict]:
     """Run one episode with the model deterministically, return per-step records."""
+
+    # Load embedded config if present (action table, skip, etc.)
+    config = load_config_from_model(model_path)
+    if config:
+        apply_config(config)
+        print(f"Loaded embedded config: {config['action_names']}")
 
     base_env = retro.make(
         game=GAME,
@@ -72,11 +80,9 @@ def run_episode(model_path: str) -> list[dict]:
         cumulative_reward += reward
         step_num += 1
 
-        # Grab the last raw RGB frame from the inner env
-        # env.env is the base retro env; its last observation is the raw frame
-        # We can reconstruct from the wrapper internals – the easiest way is to
-        # use the retro env's screen directly.
+        # Grab the last raw RGB frame and emulator state
         raw_frame = base_env.get_screen()  # (H, W, 3) RGB array
+        emu_state = base_env.em.get_state()  # raw emulator state bytes
 
         records.append({
             "step": step_num,
@@ -87,6 +93,7 @@ def run_episode(model_path: str) -> list[dict]:
             "score": env.episode_score,
             "lives": info.get("lives", 0),
             "frame": raw_frame.copy(),
+            "emu_state": emu_state,
         })
 
     env.close()
@@ -145,7 +152,7 @@ def launch_navigator(records: list[dict]) -> None:
         color="white",
     )
 
-    fig.suptitle(f"Frame 1 / {total}", fontsize=12)
+    fig.suptitle(f"Frame 1 / {total}  |  ←/→ navigate, S = save state", fontsize=10)
 
     def on_key(event):
         if event.key == "right":
@@ -156,15 +163,34 @@ def launch_navigator(records: list[dict]) -> None:
             idx[0] = 0
         elif event.key == "end":
             idx[0] = total - 1
+        elif event.key == "s":
+            _save_state(records[idx[0]])
+            return
         else:
             return
         im.set_data(records[idx[0]]["frame"])
         txt.set_text(_format_info(records[idx[0]]))
-        fig.suptitle(f"Frame {idx[0] + 1} / {total}", fontsize=12)
+        fig.suptitle(f"Frame {idx[0] + 1} / {total}  |  ←/→ navigate, S = save state", fontsize=10)
         fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect("key_press_event", on_key)
     plt.show()
+
+
+# =============================================================================
+# SAVE STATE
+# =============================================================================
+
+def _save_state(record: dict) -> None:
+    """Save the emulator state from a record to the project states/ dir."""
+    os.makedirs(STATES_DIR, exist_ok=True)
+    xscroll = record["xscroll"]
+    step = record["step"]
+    filename = f"Level1_x{xscroll}_step{step}.state"
+    filepath = os.path.join(STATES_DIR, filename)
+    with gzip.open(filepath, "wb") as f:
+        f.write(record["emu_state"])
+    print(f"✅ State saved: {filepath}")
 
 
 # =============================================================================

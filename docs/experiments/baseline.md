@@ -8,7 +8,7 @@ nav_order: 1
 # Experiment: Baseline
 {: .no_toc }
 
-**Date:** 2026-02-22 · **Model:** `no_fire_final.zip`
+**Date:** 2026-02-22 · **Model:** `baseline_final.zip`
 {: .fs-5 .fw-300 }
 
 ---

@@ -12,6 +12,7 @@ Edit ACTIONS below to define the sequence, then run:
 
 import os
 import sys
+import gzip
 
 import warnings
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
@@ -22,11 +23,6 @@ import stable_retro as retro
 # Add parent so we can import from main/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "main"))
 from contra_wrapper import ACTION_NAMES, Monitor, create_env
-
-# =====================================================================
-# DEFINE YOUR ACTION SEQUENCE HERE
-# Valid actions: N(oop), F(ire), L(eft), R(ight), U(p), D(own), J(ump)
-# =====================================================================
 
 
 GAME = "Contra-Nes"
@@ -48,9 +44,18 @@ def run_sequence(actions, output_path, state=STATE):
 
     monitor = Monitor(240, 224, saved_path=output_path)
 
+    # Detect custom state file path
+    custom_state_data = None
+    if state.endswith(".state") and os.path.isfile(state):
+        with gzip.open(state, "rb") as f:
+            custom_state_data = f.read()
+        init_state = STATE
+    else:
+        init_state = state
+
     base_env = retro.make(
         game=GAME,
-        state=state,
+        state=init_state,
         use_restricted_actions=retro.Actions.FILTERED,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
@@ -59,6 +64,19 @@ def run_sequence(actions, output_path, state=STATE):
     env = create_env(base_env, monitor=monitor)
 
     obs, info = env.reset()
+
+    # Load custom state after reset
+    if custom_state_data:
+        base_env.em.set_state(custom_state_data)
+        base_env.data.update_ram()
+        no_op = np.zeros(base_env.action_space.shape, dtype=base_env.action_space.dtype)
+        base_env.step(no_op)
+        info_ram = base_env.data.lookup_all()
+        env.prev_xscroll = info_ram.get("xscroll", 0)
+        env.prev_score = info_ram.get("score", 0)
+        env.prev_lives = info_ram.get("lives", 0)
+        env.max_x_reached = env.prev_xscroll
+        print(f"Loaded custom state: {state} (xscroll={env.prev_xscroll})")
 
     prev_score = env.prev_score
     prev_xscroll = env.prev_xscroll
@@ -95,27 +113,12 @@ def run_sequence(actions, output_path, state=STATE):
     print(f"\nGIF saved: {output_path} ({file_size:.1f} KB, {len(monitor.frames)} frames)")
 
 
-def make_filename(actions):
-    """Compress action list into run-length name: ["R"]*30 + ["N"] -> "R30_N"."""
-    parts = []
-    i = 0
-    while i < len(actions):
-        action = actions[i]
-        count = 1
-        while i + count < len(actions) and actions[i + count] == action:
-            count += 1
-        parts.append(f"{action}{count}" if count > 1 else action)
-        i += count
-    return "_".join(parts)
-
 
 if __name__ == "__main__":
-    PREFIX = ["R"] * 20
+    # Test laser rapid fire: Jump+Fire x 10 from a state with the laser equipped
+    LASER_STATE = os.path.join(os.path.dirname(__file__), "..", "main", "states", "Level1_x0_step1.state")
+    actions = ["JF",'F'] * 60
 
-    SUFFIX = ["N"] * 20
-    actions =  PREFIX + ["R",'F'] * 30 + SUFFIX 
-
-    
-    seq_str = make_filename(actions)
+    seq_str = 'JF_F_60_normal'
     output_path = os.path.join(GIFS_DIR, f"seq_{seq_str}.gif")
-    run_sequence(actions, output_path)
+    run_sequence(actions, output_path, state=LASER_STATE)

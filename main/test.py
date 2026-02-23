@@ -8,6 +8,7 @@ Usage:
     python test.py --render                           # Also show live gameplay
 """
 
+import gzip
 import os
 
 import warnings
@@ -17,7 +18,7 @@ import numpy as np
 import stable_retro as retro
 from stable_baselines3 import PPO
 
-from contra_wrapper import create_env, Monitor
+from contra_wrapper import create_env, Monitor, load_config_from_model, apply_config
 
 
 # =============================================================================
@@ -70,9 +71,19 @@ def main():
     monitor = Monitor(240, 224, saved_path=output_path, render=args.render)
 
     # Create environment
+    # If --state is a file path, load the default state first then override after reset
+    custom_state_data = None
+    if args.state.endswith(".state") and os.path.isfile(args.state):
+        with gzip.open(args.state, "rb") as f:
+            custom_state_data = f.read()
+        init_state = STATE  # use default state for env creation
+        print(f"Custom state file: {args.state}")
+    else:
+        init_state = args.state
+
     base_env = retro.make(
         game=GAME,
-        state=args.state,
+        state=init_state,
         use_restricted_actions=retro.Actions.FILTERED,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
@@ -82,6 +93,14 @@ def main():
 
     # Load model
     if os.path.exists(model_path):
+        # Load embedded wrapper config (action table, skip, etc.) if present
+        config = load_config_from_model(model_path)
+        if config:
+            apply_config(config)
+            print(f"Loaded embedded config: {config['action_names']}")
+        else:
+            print("No embedded config found, using current defaults")
+
         print(f"Loading model: {model_path}")
         model = PPO.load(model_path)
     else:
@@ -92,6 +111,25 @@ def main():
 
     # Run single episode
     obs, info = env.reset()
+
+    # Override with custom state after reset (reset clears the emulator state)
+    if custom_state_data:
+        base_env.em.set_state(custom_state_data)
+        base_env.data.update_ram()
+        # Step once with no-op to sync observation with the loaded state
+        no_op = np.zeros(base_env.action_space.shape, dtype=base_env.action_space.dtype)
+        raw_obs, _, _, _, info = base_env.step(no_op)
+        # Re-initialize wrapper's frame stack with the new state
+        from contra_wrapper import process_frame
+        processed = process_frame(raw_obs)
+        env.states = np.concatenate([processed for _ in range(env.stack)], axis=0)
+        obs = env._get_obs()
+        # Re-sync wrapper tracking state
+        env.prev_xscroll = info.get("xscroll", 0)
+        env.prev_score = info.get("score", 0)
+        env.prev_lives = info.get("lives", 0)
+        env.max_x_reached = env.prev_xscroll
+        print(f"Loaded custom state at xscroll={env.prev_xscroll}")
 
     done = False
     episode_reward = 0

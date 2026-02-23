@@ -22,7 +22,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from contra_wrapper import create_env
+from contra_wrapper import create_env, save_config_to_model
 
 # =============================================================================
 # CONFIG
@@ -147,13 +147,19 @@ class RandomStateWrapper(gym.Wrapper):
         super().__init__(env)
         self.game = game
         self.states = states
-        # Preload all state data
+        # Preload all state data (supports both state names and .state file paths)
         self.state_data = []
         for s in states:
-            path = retro.data.get_file_path(game, f"{s}.state",
-                                            inttype=retro.data.Integrations.ALL)
-            with gzip.open(path, "rb") as f:
-                self.state_data.append(f.read())
+            if s.endswith(".state") and os.path.isfile(s):
+                # Custom state file path
+                with gzip.open(s, "rb") as f:
+                    self.state_data.append(f.read())
+            else:
+                # Built-in retro state name
+                path = retro.data.get_file_path(game, f"{s}.state",
+                                                inttype=retro.data.Integrations.ALL)
+                with gzip.open(path, "rb") as f:
+                    self.state_data.append(f.read())
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
@@ -174,9 +180,18 @@ class RandomStateWrapper(gym.Wrapper):
 
 def make_env(game, states, seed=0, random_start_frames=0):
     def _init():
+        # Use first non-file state for retro.make, or fallback to default
+        init_state = None
+        for s in states:
+            if not (s.endswith(".state") and os.path.isfile(s)):
+                init_state = s
+                break
+        if init_state is None:
+            init_state = "Level1"  # fallback: create env with default, override later
+
         env = retro.make(
             game=game,
-            state=states[0],
+            state=init_state,
             use_restricted_actions=retro.Actions.FILTERED,
             obs_type=retro.Observations.IMAGE,
             render_mode=None,
@@ -286,6 +301,7 @@ def main():
     # Save final model and normalizer stats
     final_path = os.path.join(SAVE_DIR, f"{args.name}_final.zip")
     model.save(final_path)
+    save_config_to_model(final_path)
     print(f"Final model saved: {final_path}")
 
     env.close()

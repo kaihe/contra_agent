@@ -3,7 +3,7 @@ Contra (NES) Custom Wrapper for Stable-Baselines3
 ==================================================
 
 Single wrapper: ContraWrapper
-  - Discrete(7) action space: fire-only OR directional moves (no simultaneous fire)
+  - Discrete(7) action space: always-fire + directional combos
   - Frame skip (4x) + frame stacking (4)
   - Reward shaping: position delta, score delta, death penalty, terminal bonuses
   - Max-pool last 2 raw frames (flicker removal)
@@ -13,24 +13,62 @@ Single wrapper: ContraWrapper
 
 import cv2
 import gymnasium as gym
+import json
 import numpy as np
+import zipfile
 
 
 # NES buttons: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 # Index:        0  1     2       3      4   5     6     7      8
 #
-# NOTE: Only action 0 presses Fire (B). Movement actions do NOT fire.
+# All actions include Fire (B=1). Agent always shoots while moving.
 ACTION_TABLE = [
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: Fire only          F
-    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 1: Left               L
-    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 2: Right              R
-    [0, 0, 0, 0, 1, 0, 0, 0, 0],  # 3: Up                 U
-    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down               D
-    [0, 0, 0, 0, 0, 0, 1, 0, 1],  # 5: Left+Jump          LJ
-    [0, 0, 0, 0, 0, 0, 0, 1, 1],  # 6: Right+Jump         RJ
+    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: Fire              F
+    [1, 0, 0, 0, 0, 0, 1, 0, 0],  # 1: Left+Fire          LF
+    [1, 0, 0, 0, 0, 0, 0, 1, 0],  # 2: Right+Fire         RF
+    [1, 0, 0, 0, 1, 0, 0, 0, 0],  # 3: Up+Fire            UF
+    [1, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down+Fire          DF
+    [1, 0, 0, 0, 0, 0, 1, 0, 1],  # 5: Left+Jump+Fire     LJF
+    [1, 0, 0, 0, 0, 0, 0, 1, 1],  # 6: Right+Jump+Fire    RJF
+    [1, 0, 0, 0, 0, 0, 0, 0, 1],  # 7: Jump+Fire          JF
 ]
-ACTION_NAMES = ["F", "L", "R", "U", "D", "LJ", "RJ"]
+ACTION_NAMES = ["F", "LF", "RF", "UF", "DF", "LJF", "RJF", "JF"]
 NUM_ACTIONS = len(ACTION_TABLE)
+
+
+# =============================================================================
+# MODEL CONFIG (embedded in .zip)
+# =============================================================================
+
+def save_config_to_model(model_path: str, skip: int = 4, stack: int = 4) -> None:
+    """Embed contra_config.json into an SB3 model .zip file."""
+    config = {
+        "action_table": ACTION_TABLE,
+        "action_names": ACTION_NAMES,
+        "skip": skip,
+        "stack": stack,
+    }
+    with zipfile.ZipFile(model_path, "a") as zf:
+        zf.writestr("contra_config.json", json.dumps(config, indent=2))
+
+
+def load_config_from_model(model_path: str) -> dict | None:
+    """Extract contra_config.json from an SB3 model .zip, or None if missing."""
+    try:
+        with zipfile.ZipFile(model_path, "r") as zf:
+            if "contra_config.json" in zf.namelist():
+                return json.loads(zf.read("contra_config.json"))
+    except (zipfile.BadZipFile, KeyError):
+        pass
+    return None
+
+
+def apply_config(config: dict) -> None:
+    """Override the global ACTION_TABLE/ACTION_NAMES with values from config."""
+    global ACTION_TABLE, ACTION_NAMES, NUM_ACTIONS
+    ACTION_TABLE = config["action_table"]
+    ACTION_NAMES = config["action_names"]
+    NUM_ACTIONS = len(ACTION_TABLE)
 
 
 # =============================================================================
@@ -243,7 +281,11 @@ class ContraWrapper(gym.Wrapper):
 
         # Hold buttons for (skip-1) frames, then 1 no-op release frame
         for i in range(self.skip):
-            act = nes_action 
+            act = nes_action.copy()
+            # Release B button (index 0) on the last frame to allow rapid fire
+            if i == self.skip - 1:
+                act[0] = 0
+            
             state, _, term, trunc, info = self.env.step(act)
             if self.monitor:
                 self.monitor.record(state)
