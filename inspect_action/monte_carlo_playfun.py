@@ -54,6 +54,7 @@ class State:
     lives: int = 0
     max_x_reached: int = 0
     idle_steps: int = 0
+    boss_hit_sum: int = 0
     done: bool = False
 
     def clone(self):
@@ -65,15 +66,25 @@ class State:
             lives=self.lives,
             max_x_reached=self.max_x_reached,
             idle_steps=self.idle_steps,
+            boss_hit_sum=self.boss_hit_sum,
             done=self.done,
         )
 
 
-def compute_reward(state: State, info: dict) -> float:
+def get_boss_hit_sum(env):
+    ram = env.get_ram()
+    h1, h2, h3 = ram[1412], ram[1414], ram[1415]
+    h1 = 0 if h1 == 240 else h1
+    h2 = 0 if h2 == 240 else h2
+    h3 = 0 if h3 == 240 else h3
+    return h1 + h2 + h3
+
+def compute_reward(state: State, info: dict, env) -> float:
     reward = 0.0
     curr_xscroll = info.get("xscroll", state.xscroll)
     curr_score = info.get("score", 0)
     curr_lives = info.get("lives", 0)
+    curr_boss_hit_sum = get_boss_hit_sum(env)
 
     if curr_xscroll > state.max_x_reached:
         state.idle_steps = 0
@@ -81,13 +92,19 @@ def compute_reward(state: State, info: dict) -> float:
     else:
         state.idle_steps += 1
 
-    if state.idle_steps > 20:
+    # Don't penalize idling during stationary boss fights
+    if state.idle_steps > 20 and curr_xscroll < 3072:
         reward -= 0.05
     else:
         pos_delta = curr_xscroll - state.xscroll
         reward += max(min(pos_delta, 3.0), 0) * (1 / 10)
         score_delta = curr_score - state.score
         reward += max(score_delta, 0)
+        
+    if curr_xscroll >= 3072:
+        hit_diff = state.boss_hit_sum - curr_boss_hit_sum
+        if 0 < hit_diff < 50:
+            reward += hit_diff 
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
@@ -95,6 +112,7 @@ def compute_reward(state: State, info: dict) -> float:
     state.xscroll = curr_xscroll
     state.score = curr_score
     state.lives = curr_lives
+    state.boss_hit_sum = curr_boss_hit_sum
     return reward
 
 
@@ -127,7 +145,7 @@ def run_random_rollout(env, start_state: State, length: int) -> tuple:
     
     for act in seq:
         info, done = step_env(env, act)
-        reward = compute_reward(child, info)
+        reward = compute_reward(child, info, env)
         child.cumulative_reward += reward
         
         if info.get("lives", child.lives) < start_state.lives:
@@ -156,6 +174,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
         score=initial_info.get("score", 0),
         lives=initial_info.get("lives", 0),
         max_x_reached=initial_info.get("xscroll", 0),
+        boss_hit_sum=get_boss_hit_sum(env),
     )
     committed_actions = []
 
@@ -232,7 +251,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             new_committed = committed.clone()
             new_committed.emu_state = env.em.get_state()
             new_committed.done = done
-            reward = compute_reward(new_committed, info)
+            reward = compute_reward(new_committed, info, env)
             
             if done and info.get("lives", 0) > 0:
                 reward += 100
@@ -292,6 +311,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 score=initial_info.get("score", 0),
                 lives=initial_info.get("lives", 0),
                 max_x_reached=initial_info.get("xscroll", 0),
+                boss_hit_sum=get_boss_hit_sum(env),
             )
             
             for act in committed_actions[:rewind_to]:
@@ -300,7 +320,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 info, done = step_env(env, act)
                 replay_state.emu_state = env.em.get_state()
                 replay_state.done = done
-                reward = compute_reward(replay_state, info)
+                reward = compute_reward(replay_state, info, env)
                 if done and info.get("lives", 0) > 0:
                     reward += 100
                 replay_state.cumulative_reward += reward
@@ -315,7 +335,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             info, done = step_env(env, random_action)
             committed.emu_state = env.em.get_state()
             committed.done = done
-            reward = compute_reward(committed, info)
+            reward = compute_reward(committed, info, env)
             committed.cumulative_reward += reward
             committed_actions.append(random_action)
             
@@ -403,10 +423,10 @@ def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions
 
 
 def main():
-    state_file = "main/states/Level1_x3048_step921.state"
-    rollouts = 256
+    state_file = "main/states/Level1_x3022_step5543_boss_spread.state"
+    rollouts = 512
     rollout_len = 16
-    commit_steps = 4
+    commit_steps = 16
     patience = 10
     max_steps = 4000
     max_time = 600

@@ -110,7 +110,7 @@ class Monitor:
             import imageio
             # Skip frames to speed up: keep every 4th frame at 20ms (~3x real speed)
             frames = self.frames[::4]
-            imageio.mimsave(self.saved_path, frames, duration=20)
+            imageio.mimsave(self.saved_path, frames, duration=20, loop=0)
         if self.render:
             self._pygame.quit()
 
@@ -177,6 +177,7 @@ class ContraWrapper(gym.Wrapper):
         self.total_timesteps = 0
         self.max_episode_steps = 4000
         self.idle_steps = 0
+        self.prev_boss_hit_sum = 0
 
         # Episode stats for logging
         self.episode_score = 0
@@ -189,6 +190,14 @@ class ContraWrapper(gym.Wrapper):
         """Return (84, 84, stack) channels-last."""
         return np.transpose(self.states, (1, 2, 0))
 
+    def _get_boss_hit_sum(self):
+        ram = self.env.get_ram()
+        h1, h2, h3 = ram[1412], ram[1414], ram[1415]
+        h1 = 0 if h1 == 240 else h1
+        h2 = 0 if h2 == 240 else h2
+        h3 = 0 if h3 == 240 else h3
+        return h1 + h2 + h3
+
     def _compute_reward(self, info):
         """Compute shaped reward from a single emulator frame's info."""
         reward = 0.0
@@ -196,6 +205,7 @@ class ContraWrapper(gym.Wrapper):
         curr_xscroll = info.get("xscroll", self.prev_xscroll)
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", 0)
+        curr_boss_hit_sum = self._get_boss_hit_sum()
 
         self.episode_score = curr_score
 
@@ -206,7 +216,8 @@ class ContraWrapper(gym.Wrapper):
         else:
             self.idle_steps += 1
 
-        if self.idle_steps > 20:
+        # Don't penalize idling during stationary boss fights
+        if self.idle_steps > 20 and curr_xscroll < 3072:
             reward -= 0.05
         else:
             # Position reward: delta clipped [0, 0.3], in total 3000 points
@@ -225,10 +236,17 @@ class ContraWrapper(gym.Wrapper):
         if curr_lives < self.prev_lives:
             reward -= 20
 
+        # Dense Boss Hit Reward
+        if curr_xscroll >= 3072:
+            hit_diff = self.prev_boss_hit_sum - curr_boss_hit_sum
+            if 0 < hit_diff < 50:
+                reward += hit_diff * 10.0  # Dense +10 reward per bullet hit
+
         # Update state
         self.prev_xscroll = curr_xscroll
         self.prev_score = curr_score
         self.prev_lives = curr_lives
+        self.prev_boss_hit_sum = curr_boss_hit_sum
 
         return reward
 
@@ -242,6 +260,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_x_reached = self.prev_xscroll
         self.total_timesteps = 0
         self.idle_steps = 0
+        self.prev_boss_hit_sum = self._get_boss_hit_sum()
 
         self.episode_score = 0
         self.episode_reward = 0
