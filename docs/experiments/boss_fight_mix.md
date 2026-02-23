@@ -55,6 +55,10 @@ We also tested the agent starting directly from the Boss state.
 | Total Reward   | **-89.8** |
 | Distance       | 3072   |
 
+### Gameplay Recording
+
+![Boss Fight Mix gameplay — agent fires once and never again]({{ site.baseurl }}/assets/recordings/boss_fight_mix_final_level1.gif)
+
 ---
 
 ## Analysis: The "Glued Trigger" Failure
@@ -67,12 +71,6 @@ The issue stems from how the NES hardware registers button presses, combined wit
 
 **1. The Action Wrapper Bug**
 In `contra_wrapper.py`, the `skip` loop executes the chosen action for 4 consecutive emulator frames. A comment suggested it would hold for 3 frames and release for 1, but the code actually passes the `nes_action` for *all* 4 frames:
-```python
-# Hold buttons for (skip-1) frames, then 1 no-op release frame  <-- (Comment lied!)
-for i in range(self.skip):
-    act = nes_action 
-    state, _, term, trunc, info = self.env.step(act)
-```
 
 **2. The Contra Weapon Mechanic**
 With our new "always-fire" action space, the agent always chooses an action where `B=1`. Because `step()` perpetually holds the `B` button down without ever releasing it between actions, it mimics a player physically gluing down the `B` button. 
@@ -83,17 +81,13 @@ In Contra, the default rifle is **semi-automatic**. If you hold the `B` button d
 
 By attempting to give the agent constant "run-and-gun" abilities, we accidentally created an agent that **fired exactly once at the start of the level and never again**. Without the ability to shoot, the agent was quickly overwhelmed by enemies (Distance ~1500-2000) and completely annihilated during the boss fight (yielding negative rewards).
 
----
+### Lesson Learned: Test Actions Before Training
 
-## Next Steps
+This failure cost us an entire training run (~32M timesteps). The bug could have been caught in minutes with a simple action sequence test. Going forward, every time we modify the action table or wrapper behavior, we should **verify the actions actually work** before committing to a long training run.
 
-We need to fix the action wrapper to pulse the `B` button (trigger a release frame) to enable true rapid fire. 
+One approach is a lightweight **beam search** over the action space — brute-force a short sequence of actions and check if the game state progresses as expected (e.g., score increases, enemies die, distance advances). This is reminiscent of Tom Murphy's [learnfun & playfun](https://tom7.org/mario/) project, where:
 
-**Planned Fix for `ContraWrapper.step`:**
-```python
-for i in range(self.skip):
-    # Enforce a release on the last frame of the skip so the weapon can fire again
-    act = nes_action if i < self.skip - 1 else self._no_op
-    state, _, term, trunc, info = self.env.step(act)
-```
-After fixing the rapid-fire bug, we will retrain the boss fight mix.
+- **learnfun** identifies valuable RAM addresses correlated with "winning" (e.g., score, distance, lives)
+- **playfun** uses beam search to brute-force the action space, optimizing those RAM addresses to play NES games without any neural network at all
+
+While we use PPO instead of beam search for the actual agent, the *testing* phase could benefit from this philosophy: define success metrics from RAM, then verify that our action space can actually move those metrics in the right direction before investing GPU hours into training.
