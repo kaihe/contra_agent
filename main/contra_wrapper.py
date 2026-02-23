@@ -192,7 +192,7 @@ class ContraWrapper(gym.Wrapper):
 
     def _get_boss_hit_sum(self):
         ram = self.unwrapped.get_ram()
-        h1, h2, h3 = ram[1412], ram[1414], ram[1415]
+        h1, h2, h3 = int(ram[1412]), int(ram[1414]), int(ram[1415])
         h1 = 0 if h1 == 240 else h1
         h2 = 0 if h2 == 240 else h2
         h3 = 0 if h3 == 240 else h3
