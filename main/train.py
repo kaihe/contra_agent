@@ -173,6 +173,9 @@ class RandomStateWrapper(gym.Wrapper):
         )
         return obs, info
 
+    def get_ram(self):
+        return self.unwrapped.get_ram()
+
 
 # =============================================================================
 # ENVIRONMENT FACTORY

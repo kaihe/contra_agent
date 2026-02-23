@@ -191,7 +191,7 @@ class ContraWrapper(gym.Wrapper):
         return np.transpose(self.states, (1, 2, 0))
 
     def _get_boss_hit_sum(self):
-        ram = self.env.get_ram()
+        ram = self.unwrapped.get_ram()
         h1, h2, h3 = ram[1412], ram[1414], ram[1415]
         h1 = 0 if h1 == 240 else h1
         h2 = 0 if h2 == 240 else h2
