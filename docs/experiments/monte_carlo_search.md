@@ -1,11 +1,11 @@
 ---
 layout: default
-title: "Monte Carlo Search"
+title: "3. Action Test: Monte Carlo Search"
 parent: Experiments
-nav_order: 4
+nav_order: 3
 ---
 
-# Experiment: Monte Carlo Search and Playfun
+# 3. Action Test: Monte Carlo Search
 {: .no_toc }
 
 **Date:** 2026-02-23 · **Model:** `None (Brute Force Search)`

@@ -1,11 +1,11 @@
 ---
 layout: default
-title: "Boss Fight Mix (Always Fire Bug)"
+title: "2. Enhance Boss Fight Training"
 parent: Experiments
 nav_order: 2
 ---
 
-# Experiment: Boss Fight Mix
+# 2. Enhance Boss Fight Training
 {: .no_toc }
 
 **Date:** 2026-02-23 · **Model:** `boss_fight_mix_final.zip`

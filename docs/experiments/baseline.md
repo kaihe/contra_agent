@@ -1,11 +1,11 @@
 ---
 layout: default
-title: "Baseline"
+title: "1. Baseline"
 parent: Experiments
 nav_order: 1
 ---
 
-# Experiment: Baseline
+# 1. Baseline
 {: .no_toc }
 
 **Date:** 2026-02-22 · **Model:** `baseline_final.zip`
