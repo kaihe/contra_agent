@@ -23,3 +23,6 @@ __pycache__/
 
 # IDE / local
 .claude/
+
+# Traces
+*.npz
