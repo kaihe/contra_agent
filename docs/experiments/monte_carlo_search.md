@@ -8,7 +8,7 @@ nav_order: 4
 # Experiment: Monte Carlo Search and Playfun
 {: .no_toc }
 
-**Date:** 2026-02-23 · **Model:** `None (Agentic Search)`
+**Date:** 2026-02-23 · **Model:** `None (Brute Force Search)`
 {: .fs-5 .fw-300 }
 
 ---
@@ -48,4 +48,5 @@ Below is the agent using the Monte Carlo backtrack search algorithm, starting fr
 ![Monte Carlo Run]({{ site.baseurl }}/assets/recordings/mc_backtrack_Level1_x0_step1.gif)
 
 ## Next Steps
-- Implement boss-health memory scraping for micro-rewards on successful multi-HP target hits.
+- **Rethinking Search vs. PPO:** While the MC search algorithm "works," it is highly inefficient because it is **stateless** and cannot rely on past information. The PPO algorithm is somewhat similar to MC search in exploring futures, but it is **stateful** because it saves learned information into its network weights.
+- **Solving Sparse Rewards:** However, both the search algorithm and PPO suffer from the exact same **sparse reward issue** during the boss fight. To fix this, we need to find a way to extract boss health from the RAM so the agent receives micro-rewards for individual shots landed on multi-HP targets.
