@@ -70,4 +70,4 @@ Thanks to the Spread Gun's immense fan of damage, the MC search effortlessly spa
 ## Conclusion
 
 This experiment confirmed our most crucial hypothesis: **Our handcrafted action table is capable of defeating the boss, provided the agent has the Spread Gun.**
-We have proven that if the PPO agent is smart enough to avoid the Laser Rifle trap (reinforcing Chapter 5) and carry the Spread Gun into the boss arena, it absolutely has the mechanical capability within its restricted action space to achieve victory.
+We have proven that if the PPO agent is smart enough to avoid the Laser Rifle trap and carry the Spread Gun into the boss arena, it absolutely has the mechanical capability within its restricted action space to achieve victory.

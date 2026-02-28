@@ -52,9 +52,15 @@ def main():
     model_path = args.model or os.path.join(MODEL_DIR, DEFAULT_MODEL)
     model_name = os.path.basename(model_path).replace(".zip", "")
 
+    # Derive a clean state label for the filename
+    if args.state.endswith(".state"):
+        state_label = os.path.basename(args.state).replace(".state", "")
+    else:
+        state_label = args.state
+
     # Always record a GIF named after the model
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    output_path = os.path.join(OUTPUT_DIR, f"{model_name}.gif")
+    output_path = os.path.join(OUTPUT_DIR, f"{model_name}_{state_label}.gif")
 
     print("=" * 70)
     print("Contra (NES) - Model Testing")
@@ -97,7 +103,8 @@ def main():
         config = load_config_from_model(model_path)
         if config:
             apply_config(config)
-            print(f"Loaded embedded config: {config['action_names']}")
+            monitor.skip = config.get("skip", monitor.skip)
+            print(f"Loaded embedded config: skip={config.get('skip')}  actions={config['action_names']}")
         else:
             print("No embedded config found, using current defaults")
 

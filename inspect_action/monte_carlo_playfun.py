@@ -2,14 +2,14 @@
 Playfun — Monte Carlo Search with Backtracking
 =================================================
 
-This algorithm combines the "far sight" of Monte Carlo trace rollouts 
+This algorithm combines the "far sight" of Monte Carlo trace rollouts
 with the "time travel" of backtracking to escape traps.
 
 Algorithm:
 1. From the current COMMITTED state, generate N random rollouts
    (e.g., sequences of 16 actions).
 2. Find the rollout with the highest cumulative reward.
-3. If the BEST rollout still results in death, the COMMITTED state is 
+3. If the BEST rollout still results in death, the COMMITTED state is
    likely a trap! Force a rewind.
 4. Otherwise, commit the first K actions from the best rollout.
 5. If the committed state stops improving for `PATIENCE` steps, REWIND
@@ -73,7 +73,7 @@ class State:
 
 def get_boss_hit_sum(env):
     ram = env.get_ram()
-    h1, h2, h3 = ram[1412], ram[1414], ram[1415]
+    h1, h2, h3 = int(ram[1412]), int(ram[1414]), int(ram[1415])
     h1 = 0 if h1 == 240 else h1
     h2 = 0 if h2 == 240 else h2
     h3 = 0 if h3 == 240 else h3
@@ -100,11 +100,11 @@ def compute_reward(state: State, info: dict, env) -> float:
         reward += max(min(pos_delta, 3.0), 0) * (1 / 10)
         score_delta = curr_score - state.score
         reward += max(score_delta, 0)
-        
+
     if curr_xscroll >= 3072:
         hit_diff = state.boss_hit_sum - curr_boss_hit_sum
         if 0 < hit_diff < 50:
-            reward += hit_diff 
+            reward += hit_diff
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
@@ -116,13 +116,17 @@ def compute_reward(state: State, info: dict, env) -> float:
     return reward
 
 
-def step_env(env, action_idx: int):
-    nes_action = ACTION_TABLE[action_idx]
+def step_env(env, action_idx: int, action_table=None, skip=None):
+    if action_table is None:
+        action_table = ACTION_TABLE
+    if skip is None:
+        skip = SKIP
+    nes_action = action_table[action_idx]
     done = False
     info = {}
-    for i in range(SKIP):
+    for i in range(skip):
         act = list(nes_action)
-        if i == SKIP - 1:
+        if i == skip - 1:
             act[0] = 0
         _, _, term, trunc, info = env.step(act)
         if term or trunc:
@@ -131,27 +135,30 @@ def step_env(env, action_idx: int):
     return info, done
 
 
-def run_random_rollout(env, start_state: State, length: int) -> tuple:
+def run_random_rollout(env, start_state: State, length: int,
+                       action_table=None, skip=None) -> tuple:
     """Runs a random action sequence of `length`. Returns (sequence, final_reward, died, is_win)"""
-    num_actions = len(ACTION_TABLE)
+    if action_table is None:
+        action_table = ACTION_TABLE
+    num_actions = len(action_table)
     seq = np.random.randint(0, num_actions, size=length)
-    
+
     env.em.set_state(start_state.emu_state)
     env.data.update_ram()
-    
+
     child = start_state.clone()
     died = False
     is_win = False
-    
+
     for act in seq:
-        info, done = step_env(env, act)
+        info, done = step_env(env, act, action_table, skip)
         reward = compute_reward(child, info, env)
         child.cumulative_reward += reward
-        
+
         if info.get("lives", child.lives) < start_state.lives:
             died = True
             break
-            
+
         if done:
             if info.get("lives", 0) > 0:
                 child.cumulative_reward += 100
@@ -159,14 +166,21 @@ def run_random_rollout(env, start_state: State, length: int) -> tuple:
             else:
                 died = True
             break
-            
+
     return seq, child.cumulative_reward, died, is_win
 
 
 def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                     rollouts: int, rollout_len: int, commit_steps: int,
-                    patience: int, max_steps: int, max_time: int):
-    num_actions = len(ACTION_TABLE)
+                    patience: int, max_steps: int, max_time: int,
+                    action_table=None, action_names=None, verbose=True,
+                    rollout_budget: int = None, skip: int = None):
+    if action_table is None:
+        action_table = ACTION_TABLE
+    if action_names is None:
+        action_names = ACTION_NAMES if action_table is ACTION_TABLE \
+                       else [str(i) for i in range(len(action_table))]
+    num_actions = len(action_table)
 
     committed = State(
         emu_state=initial_emu_state,
@@ -185,23 +199,31 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
     stale_count = 0
     rewind_count = 0
     max_trap_idx = 0
+    total_rollout_evals = 0
     t_start = time.time()
 
-    print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'xscroll':>7} "
-          f"{'Score':>5} {'Lives':>5} {'Stale':>5} {'Rewinds':>7} {'Time':>6}")
-    print("-" * 70)
+    if verbose:
+        print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'xscroll':>7} "
+              f"{'Score':>5} {'Lives':>5} {'Stale':>5} {'Rewinds':>7} {'Time':>6}")
+        print("-" * 70)
 
     while len(committed_actions) < max_steps:
         elapsed = time.time() - t_start
         if elapsed > max_time:
-            print(f"\n  ⏱ Time budget exhausted ({max_time:.0f}s)")
+            if verbose:
+                print(f"\n  ⏱ Time budget exhausted ({max_time:.0f}s)")
             break
-            
+        if rollout_budget is not None and total_rollout_evals >= rollout_budget:
+            if verbose:
+                print(f"\n  ⏱ Rollout budget exhausted ({total_rollout_evals} evals)")
+            break
+
         if committed.done:
-            if committed.lives > 0:
-                print(f"\n  🏆 WIN!")
-            else:
-                print(f"\n  💀 Game Over")
+            if verbose:
+                if committed.lives > 0:
+                    print(f"\n  🏆 WIN!")
+                else:
+                    print(f"\n  💀 Game Over")
             break
 
         # ==========================================
@@ -212,28 +234,35 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
         best_died = True
         found_win = False
         winning_seq = None
-        
+        rollouts_done = 0
+
         for _ in range(rollouts):
-            seq, final_rwrd, died, is_win = run_random_rollout(env, committed, rollout_len)
-            
+            seq, final_rwrd, died, is_win = run_random_rollout(
+                env, committed, rollout_len, action_table, skip)
+            rollouts_done += 1
+
             if is_win:
                 found_win = True
                 winning_seq = seq
                 break
-                
+
             if final_rwrd > best_future_reward:
                 best_future_reward = final_rwrd
                 best_seq = seq
                 best_died = died
 
+        total_rollout_evals += rollouts_done * rollout_len
+
         # ==========================================
         # 2. COMMIT OR REWIND
         # ==========================================
         if found_win:
-            print(f"\n  🎯 Rollout found a WIN! Committing full sequence...")
+            if verbose:
+                print(f"\n  🎯 Rollout found a WIN! Committing full sequence...")
             actions_to_commit = winning_seq
         elif best_died:
-            print(f"  ☠️  All {rollouts} futures end in death! Trap detected! Forcing backtrack...")
+            if verbose:
+                print(f"  ☠️  All {rollouts} futures end in death! Trap detected! Forcing backtrack...")
             stale_count = patience # Force rewind
             actions_to_commit = []
         else:
@@ -241,25 +270,25 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             actions_to_commit = best_seq[:commit_steps]
 
         # Execute chosen actions
-        first_action_name = ACTION_NAMES[actions_to_commit[0]] if len(actions_to_commit) > 0 else "?"
-        
+        first_action_name = action_names[actions_to_commit[0]] if len(actions_to_commit) > 0 else "?"
+
         for act in actions_to_commit:
             env.em.set_state(committed.emu_state)
             env.data.update_ram()
-            info, done = step_env(env, act)
-            
+            info, done = step_env(env, act, action_table, skip)
+
             new_committed = committed.clone()
             new_committed.emu_state = env.em.get_state()
             new_committed.done = done
             reward = compute_reward(new_committed, info, env)
-            
+
             if done and info.get("lives", 0) > 0:
                 reward += 100
             new_committed.cumulative_reward += reward
-            
+
             committed = new_committed
             committed_actions.append(act)
-            
+
             if committed.done:
                 break
 
@@ -274,37 +303,38 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 stale_count = 0
             else:
                 stale_count += 1
-                
+
             if len(committed_actions) > max_trap_idx:
                 rewind_count = 0
-                
+
             step_num = len(committed_actions)
             prev_step_num = step_num - len(actions_to_commit)
-            if (step_num // 10) > (prev_step_num // 10) or committed.done or found_win:
+            if verbose and ((step_num // 10) > (prev_step_num // 10) or committed.done or found_win):
                 print(f"{step_num:5d} {first_action_name:>6} "
                       f"{committed.cumulative_reward:8.2f} {committed.xscroll:7d} "
                       f"{committed.score:5d} {committed.lives:5d} "
                       f"{stale_count:5d} {rewind_count:7d} "
                       f"{elapsed:5.1f}s")
-                      
+
         # BACKTRACK!
         if stale_count >= patience:
             rewind_count += 1
             max_trap_idx = max(max_trap_idx, len(committed_actions))
-            
+
             # Rewind backwards dynamically - rewind further the more we fail consecutively!
             rewind_amount = (patience // 2) * rewind_count
             rewind_to = max(0, best_checkpoint_idx - rewind_amount)
-            
-            print(f"\n  ⏪ REWIND #{rewind_count}: Stuck/Trap! "
-                  f"Rewinding from step {len(committed_actions)} back to step {rewind_to} "
-                  f"(best was {best_checkpoint_idx})")
-                  
+
+            if verbose:
+                print(f"\n  ⏪ REWIND #{rewind_count}: Stuck/Trap! "
+                      f"Rewinding from step {len(committed_actions)} back to step {rewind_to} "
+                      f"(best was {best_checkpoint_idx})")
+
             # Replay to rewind point
             env.em.set_state(initial_emu_state)
             env.data.update_ram()
             env.step([0] * 9)
-            
+
             replay_state = State(
                 emu_state=initial_emu_state,
                 xscroll=initial_info.get("xscroll", 0),
@@ -313,53 +343,56 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 max_x_reached=initial_info.get("xscroll", 0),
                 boss_hit_sum=get_boss_hit_sum(env),
             )
-            
+
             for act in committed_actions[:rewind_to]:
                 env.em.set_state(replay_state.emu_state)
                 env.data.update_ram()
-                info, done = step_env(env, act)
+                info, done = step_env(env, act, action_table, skip)
                 replay_state.emu_state = env.em.get_state()
                 replay_state.done = done
                 reward = compute_reward(replay_state, info, env)
                 if done and info.get("lives", 0) > 0:
                     reward += 100
                 replay_state.cumulative_reward += reward
-                
+
             committed = replay_state
             committed_actions = committed_actions[:rewind_to]
-            
+
             # Inject random action to diverge timeline
             random_action = np.random.randint(num_actions)
             env.em.set_state(committed.emu_state)
             env.data.update_ram()
-            info, done = step_env(env, random_action)
+            info, done = step_env(env, random_action, action_table, skip)
             committed.emu_state = env.em.get_state()
             committed.done = done
             reward = compute_reward(committed, info, env)
             committed.cumulative_reward += reward
             committed_actions.append(random_action)
-            
+
             stale_count = 0
-            
-            # CRITICAL: We changed the timeline! We must forget the old high score 
-            # and set the current state as the new checkpoint, otherwise we will 
+
+            # CRITICAL: We changed the timeline! We must forget the old high score
+            # and set the current state as the new checkpoint, otherwise we will
             # instantly get "stale" because we can't beat the future we just erased!
             best_reward = committed.cumulative_reward
             best_checkpoint = committed.clone()
             best_checkpoint_idx = len(committed_actions)
-            
-            print(f"  → Injected random action {ACTION_NAMES[random_action]}, "
-                  f"now at step {len(committed_actions)} (max_trap_idx: {max_trap_idx})\n")
 
-    return committed_actions, committed
+            if verbose:
+                print(f"  → Injected random action {action_names[random_action]}, "
+                      f"now at step {len(committed_actions)} (max_trap_idx: {max_trap_idx})\n")
+
+    return committed_actions, committed, total_rollout_evals
 
 
 # =========================================================================
 # REPLAY BEST SEQUENCE AS GIF
 # =========================================================================
-def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions: list, trace_path: str, gif_path: str = None):
+def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions: list, trace_path: str, gif_path: str = None, action_table=None):
+    if action_table is None:
+        action_table = ACTION_TABLE
     os.makedirs(os.path.dirname(trace_path), exist_ok=True)
-    
+
     monitor = None
     if gif_path:
         os.makedirs(os.path.dirname(gif_path), exist_ok=True)
@@ -367,10 +400,10 @@ def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions
 
     env.em.set_state(initial_emu_state)
     env.data.update_ram()
-    
+
     if monitor:
         monitor.record(env.get_screen())
-        
+
     ram_snapshots = []
     actions_history = []
     xscroll_history = []
@@ -385,14 +418,14 @@ def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions
     lives_history.append(int(initial_info.get('lives', 0)))
 
     for action_idx in actions:
-        nes_action = ACTION_TABLE[action_idx]
+        nes_action = action_table[action_idx]
         for i in range(SKIP):
             act = list(nes_action)
             if i == SKIP - 1:
                 act[0] = 0
-                
+
             obs, _, term, trunc, info = env.step(act)
-            
+
             ram_snapshots.append(env.get_ram().copy())
             actions_history.append(np.array(act, dtype=np.int8))
             xscroll_history.append(int(info.get('xscroll', 0)))
@@ -410,7 +443,7 @@ def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions
         monitor.close()
         size_kb = os.path.getsize(gif_path) / 1024
         print(f"\nGIF saved: {gif_path} ({size_kb:.1f} KB, {len(monitor.frames)} frames)")
-        
+
     np.savez_compressed(
         trace_path,
         ram=np.array(ram_snapshots, dtype=np.uint8),
@@ -466,7 +499,7 @@ def main():
     print(f"  Time Budget:        {max_time}s")
     print("=" * 70)
 
-    actions, final_state = search_and_play(
+    actions, final_state, _ = search_and_play(
         env, initial_emu_state, initial_info,
         rollouts=rollouts,
         rollout_len=rollout_len,
@@ -484,10 +517,10 @@ def main():
     print(f"  Reward:  {final_state.cumulative_reward:.2f}")
     print(f"  Score:   {final_state.score}")
     print(f"  Lives:   {final_state.lives}")
-    
+
     gif_path = os.path.join(GIFS_DIR, f"mc_backtrack_{os.path.basename(state_file)[:-6]}.gif") if save_gif else None
     trace_path = os.path.join(TRACE_DIR, f"mc_trace_{os.path.basename(state_file)[:-6]}.npz")
-    
+
     replay_and_record(env, initial_emu_state, initial_info, actions, trace_path, gif_path)
 
     env.close()

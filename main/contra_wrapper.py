@@ -3,8 +3,8 @@ Contra (NES) Custom Wrapper for Stable-Baselines3
 ==================================================
 
 Single wrapper: ContraWrapper
-  - Discrete(7) action space: always-fire + directional combos
-  - Frame skip (4x) + frame stacking (4)
+  - Discrete(7) action space: human-frequency directional combos (no forced fire)
+  - Frame skip (8x) + frame stacking (4)
   - Reward shaping: position delta, score delta, death penalty, terminal bonuses
   - Max-pool last 2 raw frames (flicker removal)
   - Grayscale + resize to 84x84 + 4-frame stack -> (84, 84, 4)
@@ -21,18 +21,18 @@ import zipfile
 # NES buttons: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 # Index:        0  1     2       3      4   5     6     7      8
 #
-# All actions include Fire (B=1). Agent always shoots while moving.
+# Top-7 human-frequency combos (derived from 55 recorded gameplay traces).
+# Fire (B) is not forced on every action — agent chooses when to shoot.
 ACTION_TABLE = [
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: Fire              F
-    [1, 0, 0, 0, 0, 0, 1, 0, 0],  # 1: Left+Fire          LF
-    [1, 0, 0, 0, 0, 0, 0, 1, 0],  # 2: Right+Fire         RF
-    [1, 0, 0, 0, 1, 0, 0, 0, 0],  # 3: Up+Fire            UF
-    [1, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down+Fire          DF
-    [1, 0, 0, 0, 0, 0, 1, 0, 1],  # 5: Left+Jump+Fire     LJF
-    [1, 0, 0, 0, 0, 0, 0, 1, 1],  # 6: Right+Jump+Fire    RJF
-    [1, 0, 0, 0, 0, 0, 0, 0, 1],  # 7: Jump+Fire          JF
+    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 0: Right              R    (31.6%)
+    [1, 0, 0, 0, 0, 0, 0, 1, 0],  # 1: Right+Fire         RF   (15.6%)
+    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 2: Down               D    ( 7.4%)
+    [0, 0, 0, 0, 0, 0, 0, 1, 1],  # 3: Right+Jump         RJ   ( 6.1%)
+    [1, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down+Fire          DF   ( 5.6%)
+    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 5: Fire               F    ( 5.2%)
+    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 6: Left               L    ( 3.2%)
 ]
-ACTION_NAMES = ["F", "LF", "RF", "UF", "DF", "LJF", "RJF", "JF"]
+ACTION_NAMES = ["R", "RF", "D", "RJ", "DF", "F", "L"]
 NUM_ACTIONS = len(ACTION_TABLE)
 
 
@@ -40,7 +40,7 @@ NUM_ACTIONS = len(ACTION_TABLE)
 # MODEL CONFIG (embedded in .zip)
 # =============================================================================
 
-def save_config_to_model(model_path: str, skip: int = 4, stack: int = 4) -> None:
+def save_config_to_model(model_path: str, skip: int = 8, stack: int = 4) -> None:
     """Embed contra_config.json into an SB3 model .zip file."""
     config = {
         "action_table": ACTION_TABLE,
@@ -78,11 +78,12 @@ def apply_config(config: dict) -> None:
 class Monitor:
     """Record raw RGB frames and/or display live via pygame."""
 
-    def __init__(self, width, height, saved_path=None, render=False):
+    def __init__(self, width, height, saved_path=None, render=False, skip=8):
         self.render = render
         self.saved_path = saved_path
         self.frames = [] if saved_path else None
         self.screen = None
+        self.skip = skip
 
         if render:
             import pygame
@@ -108,9 +109,11 @@ class Monitor:
     def close(self):
         if self.frames is not None and self.saved_path:
             import imageio
-            # Skip frames to speed up: keep every 4th frame at 20ms (~3x real speed)
-            frames = self.frames[::4]
-            imageio.mimsave(self.saved_path, frames, duration=20, loop=0)
+            # Keep 1 frame per agent action, play at ~2× real speed
+            # NES = 60 fps → real ms/action = 1000*skip/60; halve for 2× speed
+            frames = self.frames[::self.skip]
+            duration = round(1000 * self.skip / 60 / 2)
+            imageio.mimsave(self.saved_path, frames, duration=duration, loop=0)
         if self.render:
             self._pygame.quit()
 
@@ -147,7 +150,7 @@ class ContraWrapper(gym.Wrapper):
     """
 
     def __init__(self, env, monitor=None, reset_round=True, random_start_frames=0,
-                 warmup_frames=120, skip=4, stack=4, frame_callback=None):
+                 warmup_frames=120, skip=8, stack=4, frame_callback=None):
         super().__init__(env)
         self._no_op = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
         self._action_table = np.array(ACTION_TABLE, dtype=env.action_space.dtype)
@@ -240,7 +243,7 @@ class ContraWrapper(gym.Wrapper):
         if curr_xscroll >= 3072:
             hit_diff = self.prev_boss_hit_sum - curr_boss_hit_sum
             if 0 < hit_diff < 50:
-                reward += hit_diff * 10.0  # Dense +10 reward per bullet hit
+                reward += hit_diff * 0.5  # Each hit worth 0.5 reward, up to ~30
 
         # Update state
         self.prev_xscroll = curr_xscroll
@@ -356,7 +359,7 @@ class ContraWrapper(gym.Wrapper):
 # CONVENIENCE FACTORY
 # =============================================================================
 
-def create_env(env, monitor=None, reset_round=True, random_start_frames=0, skip=4, stack=4):
+def create_env(env, monitor=None, reset_round=True, random_start_frames=0, skip=8, stack=4):
     """Wrap a retro env with reward shaping + frame skip + stacking."""
     return ContraWrapper(env, monitor=monitor, reset_round=reset_round,
                          random_start_frames=random_start_frames,

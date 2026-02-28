@@ -264,8 +264,7 @@ def main():
             "n_steps": BATCH_SIZE,
         }
         model = PPO.load(args.resume, env=env, device="cuda", custom_objects=custom_objects)
-        # Set initial entropy (will be updated by EntropyScheduleCallback)
-        model.ent_coef = 0.1
+        print(f"  Resumed at timestep {model.num_timesteps:,}")
     else:
         # Create new model
         model = PPO(
@@ -294,11 +293,16 @@ def main():
     tensorboard_callback = TensorboardCallback()
 
     # Training
+    # When resuming, use cumulative total_timesteps so schedules continue from
+    # where they left off rather than restarting (reset_num_timesteps=False).
+    start_timesteps = model.num_timesteps if args.resume else 0
+    total_timesteps = start_timesteps + args.timesteps
     model.learn(
-        total_timesteps=args.timesteps,
+        total_timesteps=total_timesteps,
         callback=[checkpoint_callback, entropy_callback, tensorboard_callback],
         tb_log_name=args.name,
         progress_bar=True,
+        reset_num_timesteps=not bool(args.resume),
     )
 
     # Save final model and normalizer stats
