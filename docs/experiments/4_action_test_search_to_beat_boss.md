@@ -43,7 +43,7 @@ We successfully isolated three distinct addresses acting as **Bullet-by-Bullet H
 
 Every single time the player lands a shot on any of the three boss targets, the corresponding counter drops precisely by 1. Below is our visual proof demonstrating this perfectly smooth decrement across all winning human traces:
 
-![Boss HP Analysis]({{ site.baseurl }}/assets/boss_analysis.png)
+![Boss HP Analysis]({{ site.baseurl }}/assets/ch4_boss_analysis.png)
 
 By injecting these absolute hit counters into the Monte Carlo search evaluation logic, we transformed the sparse boss fight into a densely rewarded gradient: the search algorithm now receives explicit reward points (+1) for every single bullet that connects with the boss's hitbox.
 
@@ -56,14 +56,14 @@ Armed with the dense bullet reward, we initialized the Monte Carlo backtrack tre
 ### The Bad News: Default Rifle Fails
 When initialized with the **Default Rifle**, the tree search struggles severely.
 
-![Monte Carlo Search - Normal Rifle]({{ site.baseurl }}/assets/recordings/mc_backtrack_normal.gif)
+![Monte Carlo Search - Normal Rifle]({{ site.baseurl }}/assets/recordings/ch4_mc_backtrack_normal.gif)
 
 The slow fire rate and lack of spread mean the algorithm has to string together heavily complex, perfect jumping logic over hundreds of frames to even survive while dealing baseline DPS, ultimately collapsing to inescapable trap sequences long before breaking the core. We suspect that our current action config is indeed problematic under extreme bullet hell constraints, or it simply requires a vast amount of search time to find the exact dodge pixels.
 
 ### The Good News: Spread Gun is Viable!
 However, when initialized possessing the **Spread Gun**, the raw DPS completely overwhelms the algorithmic limitations! 
 
-![Monte Carlo Search - Spread Gun]({{ site.baseurl }}/assets/recordings/mc_backtrack_spread.gif)
+![Monte Carlo Search - Spread Gun]({{ site.baseurl }}/assets/recordings/ch4_mc_backtrack_spread.gif)
 
 Thanks to the Spread Gun's immense fan of damage, the MC search effortlessly spammed the fire button while performing minimal dodges, breaking both cannons and annihilating the core with devastating speed!
 

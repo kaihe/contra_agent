@@ -45,7 +45,7 @@ nav_order: 3
 ### Gameplay Recording
 Below is the agent using the Monte Carlo backtrack search algorithm, starting from the level 1 beginning:
 
-![Monte Carlo Run]({{ site.baseurl }}/assets/recordings/mc_backtrack_Level1_x0_step1.gif)
+![Monte Carlo Run]({{ site.baseurl }}/assets/recordings/ch3_mc_backtrack.gif)
 
 ## Next Steps
 - **Rethinking Search vs. PPO:** While the MC search algorithm "works," it is highly inefficient because it is **stateless** and cannot rely on past information. The PPO algorithm is somewhat similar to MC search in exploring futures, but it is **stateful** because it saves learned information into its network weights.

@@ -119,18 +119,14 @@ With skip=4 the old table makes erratic progress (high variance, 332 std) — ro
 
 ## Training Results
 
-We trained PPO with the new action table and skip=8 for 64M steps using multi-state training across the full level and boss arena. The `human_action` run is compared against the `ppo_contra` baseline.
+We ran two PPO training runs with the new action table and skip=8, both using multi-state training across the full level and boss arena — one with the dense boss hit reward enabled, one without.
 
-### Distance
+![Win rate comparison]({{ site.baseurl }}/assets/ch5_win_rate_comparison.png)
 
-![Distance log]({{ site.baseurl }}/assets/distance_log.png)
+The agent guided by the boss hit reward reaches **80% win rate at 64M steps**. The agent without it takes until **140M steps** to reach the same win rate. Both ultimately converge to the same performance level — the dense reward signal does not change what the policy learns, only how quickly it gets there.
 
-The new agent learns to push further into the level much faster than the baseline, reaching higher distances at the same number of training steps.
+This tells us the boss hit reward is a **convergence accelerator**, not a crutch. PPO with the sparse score and win signals alone eventually discovers the correct strategy, but needs roughly 2× the compute budget to do so. The RAM-derived hit counters simply give the agent earlier, denser feedback on a behaviour — sustained fire at the boss — that the game's native score signal rewards too infrequently to learn from efficiently.
 
-### Reward
+![human_action_final beating the boss]({{ site.baseurl }}/assets/recordings/ch5_human_action_final.gif)
 
-![Reward log]({{ site.baseurl }}/assets/reward_log.png)
-
-After 64M steps, episode reward is still trending upward with no sign of saturation, suggesting the policy could improve further with additional compute. At this point the agent defeats the Level 1 boss in over **80% of episodes** — a strong enough result to move on.
-
-![human_action_final beating the boss]({{ site.baseurl }}/assets/recordings/human_action_final_Level1.gif)
+The practical implication for Level 2 is clear: identifying the equivalent boss HP counters in RAM is worth the upfront effort, as it halves the training budget needed to achieve the same win rate.

@@ -93,7 +93,7 @@ The reward is computed per agent step (every 4 emulator frames):
 
 ### Gameplay Recording
 
-![Baseline gameplay]({{ site.baseurl }}/assets/recordings/no_fire_final.gif)
+![Baseline gameplay]({{ site.baseurl }}/assets/recordings/ch1_no_fire_final.gif)
 
 ---
 

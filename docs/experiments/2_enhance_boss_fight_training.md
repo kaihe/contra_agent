@@ -57,7 +57,7 @@ We also tested the agent starting directly from the Boss state.
 
 ### Gameplay Recording
 
-![Boss Fight Mix gameplay — agent fires once and never again]({{ site.baseurl }}/assets/recordings/boss_fight_mix_final_level1.gif)
+![Boss Fight Mix gameplay — agent fires once and never again]({{ site.baseurl }}/assets/recordings/ch2_boss_fight_mix_final.gif)
 
 ---
 
