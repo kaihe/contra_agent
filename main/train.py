@@ -181,7 +181,19 @@ class RandomStateWrapper(gym.Wrapper):
 # ENVIRONMENT FACTORY
 # =============================================================================
 
+def infer_level(states: list) -> int:
+    """Infer level number from state names (e.g. 'Level2' or 'Level2_x100.state' -> 2)."""
+    import re
+    for s in states:
+        m = re.search(r"Level(\d+)", os.path.basename(s), re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+    return 1  # default
+
+
 def make_env(game, states, seed=0, random_start_frames=0):
+    level = infer_level(states)
+
     def _init():
         # Use first non-file state for retro.make, or fallback to default
         init_state = None
@@ -190,7 +202,7 @@ def make_env(game, states, seed=0, random_start_frames=0):
                 init_state = s
                 break
         if init_state is None:
-            init_state = "Level1"  # fallback: create env with default, override later
+            init_state = f"Level{level}"
 
         env = retro.make(
             game=game,
@@ -202,7 +214,7 @@ def make_env(game, states, seed=0, random_start_frames=0):
         )
         if len(states) > 1:
             env = RandomStateWrapper(env, game=game, states=states)
-        env = create_env(env, random_start_frames=random_start_frames)
+        env = create_env(env, random_start_frames=random_start_frames, level=level)
         env = Monitor(env)
         return env
 

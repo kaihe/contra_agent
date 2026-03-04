@@ -150,7 +150,7 @@ class ContraWrapper(gym.Wrapper):
     """
 
     def __init__(self, env, monitor=None, reset_round=True, random_start_frames=0,
-                 warmup_frames=120, skip=8, stack=4, frame_callback=None):
+                 warmup_frames=120, skip=8, stack=4, frame_callback=None, level=1):
         super().__init__(env)
         self._no_op = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
         self._action_table = np.array(ACTION_TABLE, dtype=env.action_space.dtype)
@@ -161,6 +161,7 @@ class ContraWrapper(gym.Wrapper):
         self.skip = skip
         self.stack = stack
         self.frame_callback = frame_callback
+        self.level = level
 
         # Discrete action space
         self.action_space = gym.spaces.Discrete(NUM_ACTIONS)
@@ -202,7 +203,14 @@ class ContraWrapper(gym.Wrapper):
         return h1 + h2 + h3
 
     def _compute_reward(self, info):
-        """Compute shaped reward from a single emulator frame's info."""
+        """Dispatch to the level-specific reward function."""
+        if self.level == 1:
+            return self._reward_level1(info)
+        else:
+            return self._reward_score_only(info)
+
+    def _reward_level1(self, info):
+        """Level 1: xscroll progress + score + idle penalty + boss hit reward."""
         reward = 0.0
 
         curr_xscroll = info.get("xscroll", self.prev_xscroll)
@@ -212,24 +220,24 @@ class ContraWrapper(gym.Wrapper):
 
         self.episode_score = curr_score
 
-        # Idle detection: max_x_reached not pushed for 50 steps
+        # Idle detection: no progress in xscroll for too long
         if curr_xscroll > self.max_x_reached:
             self.idle_steps = 0
             self.max_x_reached = curr_xscroll
         else:
             self.idle_steps += 1
 
-        # Don't penalize idling during stationary boss fights
+        # Don't penalize idling during the stationary boss fight
         if self.idle_steps > 20 and curr_xscroll < 3072:
             reward -= 0.05
         else:
-            # Position reward: delta clipped [0, 0.3], in total 3000 points
+            # Position reward: forward progress only
             pos_delta = curr_xscroll - self.prev_xscroll
             pos_reward = max(min(pos_delta, 3.0), 0) * (1/10)
             self.episode_distance_reward += pos_reward
             reward += pos_reward
 
-            # Score reward: positive delta only, around 100 points
+            # Score reward: positive delta only
             score_delta = curr_score - self.prev_score
             score_reward = max(score_delta, 0)
             self.episode_score_reward += score_reward
@@ -239,17 +247,38 @@ class ContraWrapper(gym.Wrapper):
         if curr_lives < self.prev_lives:
             reward -= 20
 
-        # Dense Boss Hit Reward
+        # Dense boss hit reward (RAM addresses specific to Level 1 boss)
         if curr_xscroll >= 3072:
             hit_diff = self.prev_boss_hit_sum - curr_boss_hit_sum
             if 0 < hit_diff < 50:
-                reward += hit_diff * 0.5  # Each hit worth 0.5 reward, up to ~30
+                reward += hit_diff * 0.5
 
-        # Update state
         self.prev_xscroll = curr_xscroll
         self.prev_score = curr_score
         self.prev_lives = curr_lives
         self.prev_boss_hit_sum = curr_boss_hit_sum
+
+        return reward
+
+    def _reward_score_only(self, info):
+        """Level 2+: score delta only. No xscroll signal; boss RAM unknown."""
+        reward = 0.0
+
+        curr_score = info.get("score", 0)
+        curr_lives = info.get("lives", 0)
+
+        self.episode_score = curr_score
+
+        score_delta = curr_score - self.prev_score
+        score_reward = max(score_delta, 0)
+        self.episode_score_reward += score_reward
+        reward += score_reward
+
+        if curr_lives < self.prev_lives:
+            reward -= 20
+
+        self.prev_score = curr_score
+        self.prev_lives = curr_lives
 
         return reward
 
@@ -263,7 +292,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_x_reached = self.prev_xscroll
         self.total_timesteps = 0
         self.idle_steps = 0
-        self.prev_boss_hit_sum = self._get_boss_hit_sum()
+        self.prev_boss_hit_sum = self._get_boss_hit_sum() if self.level == 1 else 0
 
         self.episode_score = 0
         self.episode_reward = 0
@@ -359,8 +388,8 @@ class ContraWrapper(gym.Wrapper):
 # CONVENIENCE FACTORY
 # =============================================================================
 
-def create_env(env, monitor=None, reset_round=True, random_start_frames=0, skip=8, stack=4):
+def create_env(env, monitor=None, reset_round=True, random_start_frames=0, skip=8, stack=4, level=1):
     """Wrap a retro env with reward shaping + frame skip + stacking."""
     return ContraWrapper(env, monitor=monitor, reset_round=reset_round,
                          random_start_frames=random_start_frames,
-                         skip=skip, stack=stack)
+                         skip=skip, stack=stack, level=level)

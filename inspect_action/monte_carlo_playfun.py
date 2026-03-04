@@ -79,40 +79,48 @@ def get_boss_hit_sum(env):
     h3 = 0 if h3 == 240 else h3
     return h1 + h2 + h3
 
-def compute_reward(state: State, info: dict, env) -> float:
+def compute_reward(state: State, info: dict, env, score_only: bool = False) -> float:
     reward = 0.0
-    curr_xscroll = info.get("xscroll", state.xscroll)
     curr_score = info.get("score", 0)
     curr_lives = info.get("lives", 0)
-    curr_boss_hit_sum = get_boss_hit_sum(env)
 
-    if curr_xscroll > state.max_x_reached:
-        state.idle_steps = 0
-        state.max_x_reached = curr_xscroll
-    else:
-        state.idle_steps += 1
-
-    # Don't penalize idling during stationary boss fights
-    if state.idle_steps > 20 and curr_xscroll < 3072:
-        reward -= 0.05
-    else:
-        pos_delta = curr_xscroll - state.xscroll
-        reward += max(min(pos_delta, 3.0), 0) * (1 / 10)
+    if score_only:
+        # Level 2+: no xscroll signal, no boss HP RAM addresses known yet.
+        # Use only score delta as the progress signal.
         score_delta = curr_score - state.score
         reward += max(score_delta, 0)
+    else:
+        curr_xscroll = info.get("xscroll", state.xscroll)
+        curr_boss_hit_sum = get_boss_hit_sum(env)
 
-    if curr_xscroll >= 3072:
-        hit_diff = state.boss_hit_sum - curr_boss_hit_sum
-        if 0 < hit_diff < 50:
-            reward += hit_diff
+        if curr_xscroll > state.max_x_reached:
+            state.idle_steps = 0
+            state.max_x_reached = curr_xscroll
+        else:
+            state.idle_steps += 1
+
+        # Don't penalize idling during stationary boss fights
+        if state.idle_steps > 20 and curr_xscroll < 3072:
+            reward -= 0.05
+        else:
+            pos_delta = curr_xscroll - state.xscroll
+            reward += max(min(pos_delta, 3.0), 0) * (1 / 10)
+            score_delta = curr_score - state.score
+            reward += max(score_delta, 0)
+
+        if curr_xscroll >= 3072:
+            hit_diff = state.boss_hit_sum - curr_boss_hit_sum
+            if 0 < hit_diff < 50:
+                reward += hit_diff
+
+        state.xscroll = curr_xscroll
+        state.boss_hit_sum = curr_boss_hit_sum
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
 
-    state.xscroll = curr_xscroll
     state.score = curr_score
     state.lives = curr_lives
-    state.boss_hit_sum = curr_boss_hit_sum
     return reward
 
 
@@ -136,7 +144,7 @@ def step_env(env, action_idx: int, action_table=None, skip=None):
 
 
 def run_random_rollout(env, start_state: State, length: int,
-                       action_table=None, skip=None) -> tuple:
+                       action_table=None, skip=None, score_only: bool = False) -> tuple:
     """Runs a random action sequence of `length`. Returns (sequence, final_reward, died, is_win)"""
     if action_table is None:
         action_table = ACTION_TABLE
@@ -152,7 +160,7 @@ def run_random_rollout(env, start_state: State, length: int,
 
     for act in seq:
         info, done = step_env(env, act, action_table, skip)
-        reward = compute_reward(child, info, env)
+        reward = compute_reward(child, info, env, score_only=score_only)
         child.cumulative_reward += reward
 
         if info.get("lives", child.lives) < start_state.lives:
@@ -174,7 +182,8 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                     rollouts: int, rollout_len: int, commit_steps: int,
                     patience: int, max_steps: int, max_time: int,
                     action_table=None, action_names=None, verbose=True,
-                    rollout_budget: int = None, skip: int = None):
+                    rollout_budget: int = None, skip: int = None,
+                    score_only: bool = False):
     if action_table is None:
         action_table = ACTION_TABLE
     if action_names is None:
@@ -238,7 +247,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
 
         for _ in range(rollouts):
             seq, final_rwrd, died, is_win = run_random_rollout(
-                env, committed, rollout_len, action_table, skip)
+                env, committed, rollout_len, action_table, skip, score_only=score_only)
             rollouts_done += 1
 
             if is_win:
@@ -280,7 +289,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             new_committed = committed.clone()
             new_committed.emu_state = env.em.get_state()
             new_committed.done = done
-            reward = compute_reward(new_committed, info, env)
+            reward = compute_reward(new_committed, info, env, score_only=score_only)
 
             if done and info.get("lives", 0) > 0:
                 reward += 100
@@ -350,7 +359,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 info, done = step_env(env, act, action_table, skip)
                 replay_state.emu_state = env.em.get_state()
                 replay_state.done = done
-                reward = compute_reward(replay_state, info, env)
+                reward = compute_reward(replay_state, info, env, score_only=score_only)
                 if done and info.get("lives", 0) > 0:
                     reward += 100
                 replay_state.cumulative_reward += reward
@@ -365,7 +374,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             info, done = step_env(env, random_action, action_table, skip)
             committed.emu_state = env.em.get_state()
             committed.done = done
-            reward = compute_reward(committed, info, env)
+            reward = compute_reward(committed, info, env, score_only=score_only)
             committed.cumulative_reward += reward
             committed_actions.append(random_action)
 
@@ -456,24 +465,50 @@ def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions
 
 
 def main():
-    state_file = "main/states/Level1_x3022_step5543_boss_spread.state"
-    rollouts = 512
-    rollout_len = 16
-    commit_steps = 16
-    patience = 10
-    max_steps = 4000
-    max_time = 600
-    save_gif = True
+    parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
+    parser.add_argument("--state", type=str, default="main/states/Level1_x3022_step5543_boss_spread.state",
+                        help="State name (e.g. Level2) or path to .state file")
+    parser.add_argument("--score-only", action="store_true",
+                        help="Use score-only reward (for Level 2+ where xscroll is not a progress signal)")
+    parser.add_argument("--skip", type=int, default=8,
+                        help="Frame skip per action (default: 8)")
+    parser.add_argument("--rollouts", type=int, default=512)
+    parser.add_argument("--rollout-len", type=int, default=16)
+    parser.add_argument("--commit-steps", type=int, default=16)
+    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--max-steps", type=int, default=4000)
+    parser.add_argument("--max-time", type=int, default=600)
+    parser.add_argument("--no-gif", action="store_true")
+    args = parser.parse_args()
+
+    rollouts = args.rollouts
+    rollout_len = args.rollout_len
+    commit_steps = args.commit_steps
+    patience = args.patience
+    max_steps = args.max_steps
+    max_time = args.max_time
+    save_gif = not args.no_gif
 
     # Make absolutely sure we get different numpy random streams each run
     np.random.seed(int(time.time() * 1000) % (2**32))
 
     import gzip
-    with gzip.open(state_file, "rb") as f:
-        custom_state_data = f.read()
+
+    state_arg = args.state
+    if state_arg.endswith(".state"):
+        # File path
+        with gzip.open(state_arg, "rb") as f:
+            custom_state_data = f.read()
+        init_state = "Level1"
+        state_label = os.path.basename(state_arg)[:-6]
+    else:
+        # Named retro state (e.g. "Level2")
+        custom_state_data = None
+        init_state = state_arg
+        state_label = state_arg
 
     env = retro.make(
-        game=GAME, state="Level1",
+        game=GAME, state=init_state,
         use_restricted_actions=retro.Actions.FILTERED,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
@@ -481,8 +516,9 @@ def main():
     )
     env.reset()
 
-    env.em.set_state(custom_state_data)
-    env.data.update_ram()
+    if custom_state_data:
+        env.em.set_state(custom_state_data)
+        env.data.update_ram()
     env.step([0] * 9)
 
     initial_emu_state = env.em.get_state()
@@ -491,9 +527,11 @@ def main():
     print("=" * 70)
     print("Playfun — Monte Carlo Search with Backtracking")
     print("=" * 70)
-    print(f"  State:              {os.path.basename(state_file)}")
+    print(f"  State:              {state_arg}")
+    print(f"  Score-only reward:  {args.score_only}")
+    print(f"  Skip:               {args.skip}")
     print(f"  Rollouts/Step:      {rollouts} (random sequences evaluated)")
-    print(f"  Rollout Length:     {rollout_len} actions ({rollout_len * 4} frames)")
+    print(f"  Rollout Length:     {rollout_len} actions ({rollout_len * args.skip} frames)")
     print(f"  Commit Steps:       {commit_steps} actions at a time")
     print(f"  Patience:           {patience} stale commits before rewind")
     print(f"  Time Budget:        {max_time}s")
@@ -506,7 +544,9 @@ def main():
         commit_steps=commit_steps,
         patience=patience,
         max_steps=max_steps,
-        max_time=max_time
+        max_time=max_time,
+        skip=args.skip,
+        score_only=args.score_only,
     )
 
     print()
@@ -518,8 +558,8 @@ def main():
     print(f"  Score:   {final_state.score}")
     print(f"  Lives:   {final_state.lives}")
 
-    gif_path = os.path.join(GIFS_DIR, f"mc_backtrack_{os.path.basename(state_file)[:-6]}.gif") if save_gif else None
-    trace_path = os.path.join(TRACE_DIR, f"mc_trace_{os.path.basename(state_file)[:-6]}.npz")
+    gif_path = os.path.join(GIFS_DIR, f"mc_backtrack_{state_label}.gif") if save_gif else None
+    trace_path = os.path.join(TRACE_DIR, f"mc_trace_{state_label}.npz")
 
     replay_and_record(env, initial_emu_state, initial_info, actions, trace_path, gif_path)
 
