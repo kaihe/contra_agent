@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "main"))
 from contra_wrapper import ACTION_TABLE, ACTION_NAMES, Monitor
 
 GAME = "Contra-Nes"
-SKIP = 4
+SKIP = 8
 GIFS_DIR = os.path.join(os.path.dirname(__file__), "gifs")
 TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
 
@@ -467,10 +467,6 @@ def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
     parser.add_argument("--state", type=str, default="main/states/Level1_x3022_step5543_boss_spread.state",
                         help="State name (e.g. Level2) or path to .state file")
-    parser.add_argument("--level", type=int, default=1,
-                        help="Game level (controls reward function: 1=xscroll+score, 2+=score only)")
-    parser.add_argument("--skip", type=int, default=8,
-                        help="Frame skip per action (default: 8)")
     parser.add_argument("--rollouts", type=int, default=512)
     parser.add_argument("--rollout-len", type=int, default=16)
     parser.add_argument("--commit-steps", type=int, default=16)
@@ -493,18 +489,23 @@ def main():
 
     import gzip
 
+    import re
     state_arg = args.state
     if state_arg.endswith(".state"):
         # File path
         with gzip.open(state_arg, "rb") as f:
             custom_state_data = f.read()
-        init_state = "Level1"
         state_label = os.path.basename(state_arg)[:-6]
+        m = re.search(r"Level(\d+)", state_label, re.IGNORECASE)
+        init_state = m.group(0) if m else "Level1"
     else:
         # Named retro state (e.g. "Level2")
         custom_state_data = None
         init_state = state_arg
         state_label = state_arg
+
+    m = re.search(r"Level(\d+)", state_label, re.IGNORECASE)
+    level = int(m.group(1)) if m else 1
 
     env = retro.make(
         game=GAME, state=init_state,
@@ -527,10 +528,10 @@ def main():
     print("Playfun — Monte Carlo Search with Backtracking")
     print("=" * 70)
     print(f"  State:              {state_arg}")
-    print(f"  Level:              {args.level}")
-    print(f"  Skip:               {args.skip}")
+    print(f"  Level:              {level} (inferred)")
+    print(f"  Skip:               {SKIP}")
     print(f"  Rollouts/Step:      {rollouts} (random sequences evaluated)")
-    print(f"  Rollout Length:     {rollout_len} actions ({rollout_len * args.skip} frames)")
+    print(f"  Rollout Length:     {rollout_len} actions ({rollout_len * SKIP} frames)")
     print(f"  Commit Steps:       {commit_steps} actions at a time")
     print(f"  Patience:           {patience} stale commits before rewind")
     print(f"  Time Budget:        {max_time}s")
@@ -544,8 +545,7 @@ def main():
         patience=patience,
         max_steps=max_steps,
         max_time=max_time,
-        skip=args.skip,
-        level=args.level,
+        level=level,
     )
 
     print()
