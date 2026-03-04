@@ -79,17 +79,12 @@ def get_boss_hit_sum(env):
     h3 = 0 if h3 == 240 else h3
     return h1 + h2 + h3
 
-def compute_reward(state: State, info: dict, env, score_only: bool = False) -> float:
+def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
     reward = 0.0
     curr_score = info.get("score", 0)
     curr_lives = info.get("lives", 0)
 
-    if score_only:
-        # Level 2+: no xscroll signal, no boss HP RAM addresses known yet.
-        # Use only score delta as the progress signal.
-        score_delta = curr_score - state.score
-        reward += max(score_delta, 0)
-    else:
+    if level == 1:
         curr_xscroll = info.get("xscroll", state.xscroll)
         curr_boss_hit_sum = get_boss_hit_sum(env)
 
@@ -115,6 +110,10 @@ def compute_reward(state: State, info: dict, env, score_only: bool = False) -> f
 
         state.xscroll = curr_xscroll
         state.boss_hit_sum = curr_boss_hit_sum
+    else:
+        # Level 2+: score delta only (no xscroll signal, boss RAM addresses unknown)
+        score_delta = curr_score - state.score
+        reward += max(score_delta, 0)
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
@@ -144,7 +143,7 @@ def step_env(env, action_idx: int, action_table=None, skip=None):
 
 
 def run_random_rollout(env, start_state: State, length: int,
-                       action_table=None, skip=None, score_only: bool = False) -> tuple:
+                       action_table=None, skip=None, level: int = 1) -> tuple:
     """Runs a random action sequence of `length`. Returns (sequence, final_reward, died, is_win)"""
     if action_table is None:
         action_table = ACTION_TABLE
@@ -160,7 +159,7 @@ def run_random_rollout(env, start_state: State, length: int,
 
     for act in seq:
         info, done = step_env(env, act, action_table, skip)
-        reward = compute_reward(child, info, env, score_only=score_only)
+        reward = compute_reward(child, info, env, level=level)
         child.cumulative_reward += reward
 
         if info.get("lives", child.lives) < start_state.lives:
@@ -183,7 +182,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                     patience: int, max_steps: int, max_time: int,
                     action_table=None, action_names=None, verbose=True,
                     rollout_budget: int = None, skip: int = None,
-                    score_only: bool = False):
+                    level: int = 1):
     if action_table is None:
         action_table = ACTION_TABLE
     if action_names is None:
@@ -247,7 +246,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
 
         for _ in range(rollouts):
             seq, final_rwrd, died, is_win = run_random_rollout(
-                env, committed, rollout_len, action_table, skip, score_only=score_only)
+                env, committed, rollout_len, action_table, skip, level=level)
             rollouts_done += 1
 
             if is_win:
@@ -289,7 +288,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             new_committed = committed.clone()
             new_committed.emu_state = env.em.get_state()
             new_committed.done = done
-            reward = compute_reward(new_committed, info, env, score_only=score_only)
+            reward = compute_reward(new_committed, info, env, level=level)
 
             if done and info.get("lives", 0) > 0:
                 reward += 100
@@ -359,7 +358,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 info, done = step_env(env, act, action_table, skip)
                 replay_state.emu_state = env.em.get_state()
                 replay_state.done = done
-                reward = compute_reward(replay_state, info, env, score_only=score_only)
+                reward = compute_reward(replay_state, info, env, level=level)
                 if done and info.get("lives", 0) > 0:
                     reward += 100
                 replay_state.cumulative_reward += reward
@@ -374,7 +373,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             info, done = step_env(env, random_action, action_table, skip)
             committed.emu_state = env.em.get_state()
             committed.done = done
-            reward = compute_reward(committed, info, env, score_only=score_only)
+            reward = compute_reward(committed, info, env, level=level)
             committed.cumulative_reward += reward
             committed_actions.append(random_action)
 
@@ -468,8 +467,8 @@ def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
     parser.add_argument("--state", type=str, default="main/states/Level1_x3022_step5543_boss_spread.state",
                         help="State name (e.g. Level2) or path to .state file")
-    parser.add_argument("--score-only", action="store_true",
-                        help="Use score-only reward (for Level 2+ where xscroll is not a progress signal)")
+    parser.add_argument("--level", type=int, default=1,
+                        help="Game level (controls reward function: 1=xscroll+score, 2+=score only)")
     parser.add_argument("--skip", type=int, default=8,
                         help="Frame skip per action (default: 8)")
     parser.add_argument("--rollouts", type=int, default=512)
@@ -528,7 +527,7 @@ def main():
     print("Playfun — Monte Carlo Search with Backtracking")
     print("=" * 70)
     print(f"  State:              {state_arg}")
-    print(f"  Score-only reward:  {args.score_only}")
+    print(f"  Level:              {args.level}")
     print(f"  Skip:               {args.skip}")
     print(f"  Rollouts/Step:      {rollouts} (random sequences evaluated)")
     print(f"  Rollout Length:     {rollout_len} actions ({rollout_len * args.skip} frames)")
@@ -546,7 +545,7 @@ def main():
         max_steps=max_steps,
         max_time=max_time,
         skip=args.skip,
-        score_only=args.score_only,
+        level=args.level,
     )
 
     print()
