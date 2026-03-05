@@ -8,6 +8,7 @@ Usage:
     python train.py --resume trained_models/ppo_contra_1000000_steps.zip
 """
 
+import glob
 import os
 import gzip
 
@@ -20,6 +21,23 @@ import stable_retro as retro
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+
+
+class LatestCheckpointCallback(CheckpointCallback):
+    """Saves a checkpoint every save_freq steps, keeps only the latest one,
+    and embeds contra_config.json into each saved file."""
+
+    def _on_step(self) -> bool:
+        result = super()._on_step()
+        if self.n_calls % self.save_freq == 0:
+            pattern = os.path.join(self.save_path, f"{self.name_prefix}_*_steps.zip")
+            checkpoints = sorted(glob.glob(pattern))
+            if checkpoints:
+                save_config_to_model(checkpoints[-1])
+            for old in checkpoints[:-1]:
+                os.remove(old)
+                print(f"  Removed old checkpoint: {os.path.basename(old)}")
+        return result
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from contra_wrapper import create_env, save_config_to_model
@@ -295,8 +313,8 @@ def main():
         )
 
     # Callbacks
-    checkpoint_interval = 125000  # 125000 * 16 envs = 2M steps
-    checkpoint_callback = CheckpointCallback(
+    checkpoint_interval = 125000  # 125000 * 32 envs = 4M steps
+    checkpoint_callback = LatestCheckpointCallback(
         save_freq=checkpoint_interval,
         save_path=SAVE_DIR,
         name_prefix=args.name,
@@ -316,12 +334,6 @@ def main():
         progress_bar=True,
         reset_num_timesteps=not bool(args.resume),
     )
-
-    # Save final model and normalizer stats
-    final_path = os.path.join(SAVE_DIR, f"{args.name}_final.zip")
-    model.save(final_path)
-    save_config_to_model(final_path)
-    print(f"Final model saved: {final_path}")
 
     env.close()
 
