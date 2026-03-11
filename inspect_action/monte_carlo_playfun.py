@@ -342,10 +342,6 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                       f"(best was {best_checkpoint_idx})")
 
             # Replay to rewind point
-            env.em.set_state(initial_emu_state)
-            env.data.update_ram()
-            env.step([0] * 9)
-
             replay_state = State(
                 emu_state=initial_emu_state,
                 xscroll=initial_info.get("xscroll", 0),

@@ -1,5 +1,5 @@
-# Project: Contra Force AI (RL)
-- Game: Contra Force (NES)
+# Project: Contra NES AI (RL)
+- Game: Contra (NES)
 - Action Space: MultiBinary (NES controller buttons)
 - Library: Stable-Baselines3 + Gym Retro
 - Goal: Train PPO agent to maximize score in Level 1
@@ -9,9 +9,6 @@
 ## Game Variables
 - `lives`: Number of lives remaining (starts at 2)
 - `score`: Current score (main reward signal)
-
-## Import Reference
-- lexicographic : technique described in paper <learnfun & playfun: A general technique for automating NES games>
 
 ## Key Files
 - `main/train.py`: Training script with PPO
