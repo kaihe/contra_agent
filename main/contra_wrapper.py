@@ -113,7 +113,7 @@ class Monitor:
             # NES = 60 fps → real ms/action = 1000*skip/60; halve for 2× speed
             frames = self.frames[::self.skip]
             duration = round(1000 * self.skip / 60 / 2)
-            imageio.mimsave(self.saved_path, frames, duration=duration, loop=0)
+            imageio.mimsave(self.saved_path, frames, duration=duration, loop=1)
         if self.render:
             self._pygame.quit()
 
@@ -182,6 +182,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_episode_steps = 4000
         self.idle_steps = 0
         self.prev_enemy_hp_sum = 0
+        self.prev_cores = 0
 
         # Episode stats for logging
         self.episode_score = 0
@@ -199,6 +200,10 @@ class ContraWrapper(gym.Wrapper):
         ram = self.unwrapped.get_ram()
         return sum(int(ram[1400 + i]) for i in range(16))
 
+    def _get_cores(self):
+        """Wall cores remaining at RAM[0x0086]."""
+        return int(self.unwrapped.get_ram()[0x0086])
+
     def _compute_reward(self, info):
         """Dispatch to the level-specific reward function."""
         if self.level == 1:
@@ -214,6 +219,7 @@ class ContraWrapper(gym.Wrapper):
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", 0)
         curr_enemy_hp_sum = self._get_enemy_hp_sum()
+        curr_cores = self._get_cores()
 
         self.episode_score = curr_score
 
@@ -245,6 +251,11 @@ class ContraWrapper(gym.Wrapper):
         if hit_diff > 0:
             reward += hit_diff * 0.5
 
+        # Wall cores reward
+        core_diff = self.prev_cores - curr_cores
+        if core_diff > 0:
+            reward += core_diff * 5.0
+
         # Death penalty
         if curr_lives < self.prev_lives:
             reward -= 20
@@ -253,16 +264,18 @@ class ContraWrapper(gym.Wrapper):
         self.prev_score = curr_score
         self.prev_lives = curr_lives
         self.prev_enemy_hp_sum = curr_enemy_hp_sum
+        self.prev_cores = curr_cores
 
         return reward
 
     def _reward_level2plus(self, info):
-        """Level 2+: score + enemy hit reward. No xscroll signal."""
+        """Level 2+: score + enemy hit + cores reward. No xscroll signal."""
         reward = 0.0
 
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", 0)
         curr_enemy_hp_sum = self._get_enemy_hp_sum()
+        curr_cores = self._get_cores()
 
         self.episode_score = curr_score
 
@@ -271,10 +284,15 @@ class ContraWrapper(gym.Wrapper):
         self.episode_score_reward += score_reward
         reward += score_reward
 
-        # Enemy hit reward: any enemy HP decrease
+        # Enemy hit reward
         hit_diff = self.prev_enemy_hp_sum - curr_enemy_hp_sum
         if hit_diff > 0:
             reward += hit_diff * 0.5
+
+        # Wall cores reward
+        core_diff = self.prev_cores - curr_cores
+        if core_diff > 0:
+            reward += core_diff * 5.0
 
         if curr_lives < self.prev_lives:
             reward -= 20
@@ -282,6 +300,7 @@ class ContraWrapper(gym.Wrapper):
         self.prev_score = curr_score
         self.prev_lives = curr_lives
         self.prev_enemy_hp_sum = curr_enemy_hp_sum
+        self.prev_cores = curr_cores
 
         return reward
 
@@ -296,6 +315,7 @@ class ContraWrapper(gym.Wrapper):
         self.total_timesteps = 0
         self.idle_steps = 0
         self.prev_enemy_hp_sum = self._get_enemy_hp_sum()
+        self.prev_cores = self._get_cores()
 
         self.episode_score = 0
         self.episode_reward = 0

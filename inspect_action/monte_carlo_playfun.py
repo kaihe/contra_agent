@@ -55,6 +55,10 @@ class State:
     max_x_reached: int = 0
     idle_steps: int = 0
     enemy_hp_sum: int = 0
+    cores: int = 0
+    score_reward: float = 0.0
+    enemy_hp_reward: float = 0.0
+    cores_reward: float = 0.0
     done: bool = False
 
     def clone(self):
@@ -67,6 +71,10 @@ class State:
             max_x_reached=self.max_x_reached,
             idle_steps=self.idle_steps,
             enemy_hp_sum=self.enemy_hp_sum,
+            cores=self.cores,
+            score_reward=self.score_reward,
+            enemy_hp_reward=self.enemy_hp_reward,
+            cores_reward=self.cores_reward,
             done=self.done,
         )
 
@@ -77,12 +85,17 @@ def get_enemy_hp_sum(env):
     ram = env.get_ram()
     return sum(int(ram[1400 + i]) for i in range(16))
 
+def get_cores(env):
+    """Wall cores remaining at RAM[0x0086]."""
+    return int(env.get_ram()[0x0086])
+
 
 def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
     reward = 0.0
     curr_score = info.get("score", 0)
     curr_lives = info.get("lives", 0)
     curr_enemy_hp_sum = get_enemy_hp_sum(env)
+    curr_cores = get_cores(env)
 
     if level == 1:
         curr_xscroll = info.get("xscroll", state.xscroll)
@@ -100,18 +113,31 @@ def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
             pos_delta = curr_xscroll - state.xscroll
             reward += max(min(pos_delta, 3.0), 0) * (1 / 10)
             score_delta = curr_score - state.score
-            reward += max(score_delta, 0)
+            sr = max(score_delta, 0)
+            state.score_reward += sr
+            reward += sr
 
         state.xscroll = curr_xscroll
     else:
         # Level 2+: no xscroll signal
         score_delta = curr_score - state.score
-        reward += max(score_delta, 0)
+        sr = max(score_delta, 0)
+        state.score_reward += sr
+        reward += sr
 
-    # Enemy hit reward: applies to all levels, all enemies
+    # Enemy hit reward: all levels, all enemies
     hit_diff = state.enemy_hp_sum - curr_enemy_hp_sum
     if hit_diff > 0:
-        reward += hit_diff * 0.5
+        hp_reward = hit_diff * 0.5
+        state.enemy_hp_reward += hp_reward
+        reward += hp_reward
+
+    # Wall cores reward: all levels
+    core_diff = state.cores - curr_cores
+    if core_diff > 0:
+        cr = core_diff * 5.0
+        state.cores_reward += cr
+        reward += cr
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
@@ -119,6 +145,7 @@ def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
     state.score = curr_score
     state.lives = curr_lives
     state.enemy_hp_sum = curr_enemy_hp_sum
+    state.cores = curr_cores
     return reward
 
 
@@ -196,6 +223,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
         lives=initial_info.get("lives", 0),
         max_x_reached=initial_info.get("xscroll", 0),
         enemy_hp_sum=get_enemy_hp_sum(env),
+        cores=get_cores(env),
     )
     committed_actions = []
 
@@ -211,8 +239,8 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
 
     if verbose:
         print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'xscroll':>7} "
-              f"{'Score':>5} {'Lives':>5} {'Stale':>5} {'Rewinds':>7} {'Time':>6}")
-        print("-" * 70)
+              f"{'ScRew':>6} {'HPRew':>6} {'CoreRew':>8} {'Lives':>5} {'Stale':>5} {'Rewinds':>7} {'Time':>6}")
+        print("-" * 90)
 
     while len(committed_actions) < max_steps:
         elapsed = time.time() - t_start
@@ -319,7 +347,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             if verbose and ((step_num // 10) > (prev_step_num // 10) or committed.done or found_win):
                 print(f"{step_num:5d} {first_action_name:>6} "
                       f"{committed.cumulative_reward:8.2f} {committed.xscroll:7d} "
-                      f"{committed.score:5d} {committed.lives:5d} "
+                      f"{committed.score_reward:6.1f} {committed.enemy_hp_reward:6.1f} {committed.cores_reward:8.1f} {committed.lives:5d} "
                       f"{stale_count:5d} {rewind_count:7d} "
                       f"{elapsed:5.1f}s")
 
@@ -349,6 +377,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 lives=initial_info.get("lives", 0),
                 max_x_reached=initial_info.get("xscroll", 0),
                 enemy_hp_sum=get_enemy_hp_sum(env),
+        cores=get_cores(env),
             )
 
             for act in committed_actions[:rewind_to]:
