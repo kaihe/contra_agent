@@ -181,7 +181,7 @@ class ContraWrapper(gym.Wrapper):
         self.total_timesteps = 0
         self.max_episode_steps = 4000
         self.idle_steps = 0
-        self.prev_boss_hit_sum = 0
+        self.prev_enemy_hp_sum = 0
 
         # Episode stats for logging
         self.episode_score = 0
@@ -194,29 +194,26 @@ class ContraWrapper(gym.Wrapper):
         """Return (84, 84, stack) channels-last."""
         return np.transpose(self.states, (1, 2, 0))
 
-    def _get_boss_hit_sum(self):
+    def _get_enemy_hp_sum(self):
+        """Sum of all 16 enemy HP slots at RAM[0x578..0x587]. Works for any level."""
         ram = self.unwrapped.get_ram()
-        h1, h2, h3 = int(ram[1412]), int(ram[1414]), int(ram[1415])
-        h1 = 0 if h1 == 240 else h1
-        h2 = 0 if h2 == 240 else h2
-        h3 = 0 if h3 == 240 else h3
-        return h1 + h2 + h3
+        return sum(int(ram[1400 + i]) for i in range(16))
 
     def _compute_reward(self, info):
         """Dispatch to the level-specific reward function."""
         if self.level == 1:
             return self._reward_level1(info)
         else:
-            return self._reward_score_only(info)
+            return self._reward_level2plus(info)
 
     def _reward_level1(self, info):
-        """Level 1: xscroll progress + score + idle penalty + boss hit reward."""
+        """Level 1: xscroll progress + score + idle penalty + enemy hit reward."""
         reward = 0.0
 
         curr_xscroll = info.get("xscroll", self.prev_xscroll)
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", 0)
-        curr_boss_hit_sum = self._get_boss_hit_sum()
+        curr_enemy_hp_sum = self._get_enemy_hp_sum()
 
         self.episode_score = curr_score
 
@@ -243,29 +240,29 @@ class ContraWrapper(gym.Wrapper):
             self.episode_score_reward += score_reward
             reward += score_reward
 
+        # Enemy hit reward: any enemy HP decrease on any level
+        hit_diff = self.prev_enemy_hp_sum - curr_enemy_hp_sum
+        if hit_diff > 0:
+            reward += hit_diff * 0.5
+
         # Death penalty
         if curr_lives < self.prev_lives:
             reward -= 20
 
-        # Dense boss hit reward (RAM addresses specific to Level 1 boss)
-        if curr_xscroll >= 3072:
-            hit_diff = self.prev_boss_hit_sum - curr_boss_hit_sum
-            if 0 < hit_diff < 50:
-                reward += hit_diff * 0.5
-
         self.prev_xscroll = curr_xscroll
         self.prev_score = curr_score
         self.prev_lives = curr_lives
-        self.prev_boss_hit_sum = curr_boss_hit_sum
+        self.prev_enemy_hp_sum = curr_enemy_hp_sum
 
         return reward
 
-    def _reward_score_only(self, info):
-        """Level 2+: score delta only. No xscroll signal; boss RAM unknown."""
+    def _reward_level2plus(self, info):
+        """Level 2+: score + enemy hit reward. No xscroll signal."""
         reward = 0.0
 
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", 0)
+        curr_enemy_hp_sum = self._get_enemy_hp_sum()
 
         self.episode_score = curr_score
 
@@ -274,11 +271,17 @@ class ContraWrapper(gym.Wrapper):
         self.episode_score_reward += score_reward
         reward += score_reward
 
+        # Enemy hit reward: any enemy HP decrease
+        hit_diff = self.prev_enemy_hp_sum - curr_enemy_hp_sum
+        if hit_diff > 0:
+            reward += hit_diff * 0.5
+
         if curr_lives < self.prev_lives:
             reward -= 20
 
         self.prev_score = curr_score
         self.prev_lives = curr_lives
+        self.prev_enemy_hp_sum = curr_enemy_hp_sum
 
         return reward
 
@@ -292,7 +295,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_x_reached = self.prev_xscroll
         self.total_timesteps = 0
         self.idle_steps = 0
-        self.prev_boss_hit_sum = self._get_boss_hit_sum() if self.level == 1 else 0
+        self.prev_enemy_hp_sum = self._get_enemy_hp_sum()
 
         self.episode_score = 0
         self.episode_reward = 0

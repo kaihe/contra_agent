@@ -54,7 +54,7 @@ class State:
     lives: int = 0
     max_x_reached: int = 0
     idle_steps: int = 0
-    boss_hit_sum: int = 0
+    enemy_hp_sum: int = 0
     done: bool = False
 
     def clone(self):
@@ -66,27 +66,26 @@ class State:
             lives=self.lives,
             max_x_reached=self.max_x_reached,
             idle_steps=self.idle_steps,
-            boss_hit_sum=self.boss_hit_sum,
+            enemy_hp_sum=self.enemy_hp_sum,
             done=self.done,
         )
 
 
-def get_boss_hit_sum(env):
+def get_enemy_hp_sum(env):
+    """Sum of all 16 enemy HP slots at RAM[0x578..0x587].
+    Works for any level — enemies on screen, boss components, all included."""
     ram = env.get_ram()
-    h1, h2, h3 = int(ram[1412]), int(ram[1414]), int(ram[1415])
-    h1 = 0 if h1 == 240 else h1
-    h2 = 0 if h2 == 240 else h2
-    h3 = 0 if h3 == 240 else h3
-    return h1 + h2 + h3
+    return sum(int(ram[1400 + i]) for i in range(16))
+
 
 def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
     reward = 0.0
     curr_score = info.get("score", 0)
     curr_lives = info.get("lives", 0)
+    curr_enemy_hp_sum = get_enemy_hp_sum(env)
 
     if level == 1:
         curr_xscroll = info.get("xscroll", state.xscroll)
-        curr_boss_hit_sum = get_boss_hit_sum(env)
 
         if curr_xscroll > state.max_x_reached:
             state.idle_steps = 0
@@ -103,23 +102,23 @@ def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
             score_delta = curr_score - state.score
             reward += max(score_delta, 0)
 
-        if curr_xscroll >= 3072:
-            hit_diff = state.boss_hit_sum - curr_boss_hit_sum
-            if 0 < hit_diff < 50:
-                reward += hit_diff
-
         state.xscroll = curr_xscroll
-        state.boss_hit_sum = curr_boss_hit_sum
     else:
-        # Level 2+: score delta only (no xscroll signal, boss RAM addresses unknown)
+        # Level 2+: no xscroll signal
         score_delta = curr_score - state.score
         reward += max(score_delta, 0)
+
+    # Enemy hit reward: applies to all levels, all enemies
+    hit_diff = state.enemy_hp_sum - curr_enemy_hp_sum
+    if hit_diff > 0:
+        reward += hit_diff * 0.5
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
 
     state.score = curr_score
     state.lives = curr_lives
+    state.enemy_hp_sum = curr_enemy_hp_sum
     return reward
 
 
@@ -196,7 +195,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
         score=initial_info.get("score", 0),
         lives=initial_info.get("lives", 0),
         max_x_reached=initial_info.get("xscroll", 0),
-        boss_hit_sum=get_boss_hit_sum(env),
+        enemy_hp_sum=get_enemy_hp_sum(env),
     )
     committed_actions = []
 
@@ -349,7 +348,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 score=initial_info.get("score", 0),
                 lives=initial_info.get("lives", 0),
                 max_x_reached=initial_info.get("xscroll", 0),
-                boss_hit_sum=get_boss_hit_sum(env),
+                enemy_hp_sum=get_enemy_hp_sum(env),
             )
 
             for act in committed_actions[:rewind_to]:
