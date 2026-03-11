@@ -89,55 +89,33 @@ def get_cores(env):
     """Wall cores remaining at RAM[0x0086]."""
     return int(env.get_ram()[0x0086])
 
+def get_score(env):
+    """Read score directly from RAM[0x07E2..0x07E3] (little-endian 2 bytes)."""
+    ram = env.get_ram()
+    return int(ram[0x07E2]) + (int(ram[0x07E3]) << 8)
+
+
+SCORE_SCALE = 0.05
+CORE_PENALTY = -0.01
 
 def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
     reward = 0.0
-    curr_score = info.get("score", 0)
+    curr_score = get_score(env)
     curr_lives = info.get("lives", 0)
     curr_enemy_hp_sum = get_enemy_hp_sum(env)
     curr_cores = get_cores(env)
 
-    if level == 1:
-        curr_xscroll = info.get("xscroll", state.xscroll)
+    # Score reward: delta * scale (all levels)
+    score_delta = curr_score - state.score
+    sr = score_delta * SCORE_SCALE
+    state.score_reward += sr
+    reward += sr
 
-        if curr_xscroll > state.max_x_reached:
-            state.idle_steps = 0
-            state.max_x_reached = curr_xscroll
-        else:
-            state.idle_steps += 1
-
-        # Don't penalize idling during stationary boss fights
-        if state.idle_steps > 20 and curr_xscroll < 3072:
-            reward -= 0.05
-        else:
-            pos_delta = curr_xscroll - state.xscroll
-            reward += max(min(pos_delta, 3.0), 0) * (1 / 10)
-            score_delta = curr_score - state.score
-            sr = max(score_delta, 0)
-            state.score_reward += sr
-            reward += sr
-
-        state.xscroll = curr_xscroll
-    else:
-        # Level 2+: no xscroll signal
-        score_delta = curr_score - state.score
-        sr = max(score_delta, 0)
-        state.score_reward += sr
-        reward += sr
-
-    # Enemy hit reward: all levels, all enemies
-    hit_diff = state.enemy_hp_sum - curr_enemy_hp_sum
-    if hit_diff > 0:
-        hp_reward = hit_diff * 0.5
-        state.enemy_hp_reward += hp_reward
-        reward += hp_reward
-
-    # Wall cores reward: all levels
+    # Cores reward: delta reward + continuous gentle penalty for cores remaining
     core_diff = state.cores - curr_cores
-    if core_diff > 0:
-        cr = core_diff * 5.0
-        state.cores_reward += cr
-        reward += cr
+    cr = core_diff * 5.0 + curr_cores * CORE_PENALTY
+    state.cores_reward += cr
+    reward += cr
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
@@ -238,9 +216,8 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
     t_start = time.time()
 
     if verbose:
-        print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'xscroll':>7} "
-              f"{'ScRew':>6} {'HPRew':>6} {'CoreRew':>8} {'Lives':>5} {'Stale':>5} {'Rewinds':>7} {'Time':>6}")
-        print("-" * 90)
+        print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'ScRew':>6} {'HPRew':>6} {'CoreRew':>8} {'Time':>6}")
+        print("-" * 55)
 
     while len(committed_actions) < max_steps:
         elapsed = time.time() - t_start
@@ -346,9 +323,8 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             prev_step_num = step_num - len(actions_to_commit)
             if verbose and ((step_num // 10) > (prev_step_num // 10) or committed.done or found_win):
                 print(f"{step_num:5d} {first_action_name:>6} "
-                      f"{committed.cumulative_reward:8.2f} {committed.xscroll:7d} "
-                      f"{committed.score_reward:6.1f} {committed.enemy_hp_reward:6.1f} {committed.cores_reward:8.1f} {committed.lives:5d} "
-                      f"{stale_count:5d} {rewind_count:7d} "
+                      f"{committed.cumulative_reward:8.2f} "
+                      f"{committed.score_reward:6.1f} {committed.enemy_hp_reward:6.1f} {committed.cores_reward:8.1f} "
                       f"{elapsed:5.1f}s")
 
         # BACKTRACK!
