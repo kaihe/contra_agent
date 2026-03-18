@@ -23,7 +23,7 @@ import argparse
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import warnings
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
@@ -32,17 +32,14 @@ import numpy as np
 import stable_retro as retro
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "main"))
-from contra_wrapper import ACTION_TABLE, ACTION_NAMES, Monitor
+from contra_wrapper import (ACTION_TABLE, ACTION_NAMES, Monitor,
+                            get_enemy_hp_sum, reward_enemy_progress, reward_distance)
 
 GAME = "Contra-Nes"
-SKIP = 8
+DEFAULT_STATE_BY_LEVEL = {1: "Level1", 2: "Level2"}
+SKIP = 4
 GIFS_DIR = os.path.join(os.path.dirname(__file__), "gifs")
 TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
-
-# =========================================================================
-# HYPERPARAMETERS (Default values if not provided via CLI)
-# =========================================================================
-DEFAULT_STATE = "main/states/Level1_x3048_step921.state"
 
 
 @dataclass
@@ -55,10 +52,9 @@ class State:
     max_x_reached: int = 0
     idle_steps: int = 0
     enemy_hp_sum: int = 0
-    cores: int = 0
     score_reward: float = 0.0
     enemy_hp_reward: float = 0.0
-    cores_reward: float = 0.0
+    distance_reward: float = 0.0
     done: bool = False
 
     def clone(self):
@@ -71,59 +67,46 @@ class State:
             max_x_reached=self.max_x_reached,
             idle_steps=self.idle_steps,
             enemy_hp_sum=self.enemy_hp_sum,
-            cores=self.cores,
             score_reward=self.score_reward,
             enemy_hp_reward=self.enemy_hp_reward,
-            cores_reward=self.cores_reward,
+            distance_reward=self.distance_reward,
             done=self.done,
         )
 
 
-def get_enemy_hp_sum(env):
-    """Sum of all 16 enemy HP slots at RAM[0x578..0x587].
-    Works for any level — enemies on screen, boss components, all included."""
-    ram = env.get_ram()
-    return sum(int(ram[1400 + i]) for i in range(16))
-
-def get_cores(env):
-    """Wall cores remaining at RAM[0x0086]."""
-    return int(env.get_ram()[0x0086])
-
-def get_score(env):
-    """Read score directly from RAM[0x07E2..0x07E3] (little-endian 2 bytes)."""
-    ram = env.get_ram()
-    return int(ram[0x07E2]) + (int(ram[0x07E3]) << 8)
-
-
 SCORE_SCALE = 0.05
-CORE_PENALTY = -0.01
 
 def compute_reward(state: State, info: dict, env, level: int = 1) -> float:
     reward = 0.0
-    curr_score = get_score(env)
-    curr_lives = info.get("lives", 0)
-    curr_enemy_hp_sum = get_enemy_hp_sum(env)
-    curr_cores = get_cores(env)
+    curr_score   = info.get("score", state.score)
+    curr_lives   = info.get("lives", state.lives)
+    curr_xscroll = info.get("xscroll", state.xscroll)
+    curr_enemy_hp_sum = get_enemy_hp_sum(env.get_ram(), curr_xscroll, level)
 
-    # Score reward: delta * scale (all levels)
-    score_delta = curr_score - state.score
-    sr = score_delta * SCORE_SCALE
+    # Score reward
+    sr = max(curr_score - state.score, 0) * SCORE_SCALE
     state.score_reward += sr
     reward += sr
 
-    # Cores reward: delta reward + continuous gentle penalty for cores remaining
-    core_diff = state.cores - curr_cores
-    cr = core_diff * 5.0 + curr_cores * CORE_PENALTY
-    state.cores_reward += cr
-    reward += cr
+    # Distance reward
+    dr, state.max_x_reached, state.idle_steps = reward_distance(
+        curr_xscroll, state.xscroll, state.max_x_reached, state.idle_steps, level
+    )
+    state.distance_reward += dr
+    reward += dr
+
+    # Enemy HP reward
+    er = reward_enemy_progress(state.enemy_hp_sum, curr_enemy_hp_sum)
+    state.enemy_hp_reward += er
+    reward += er
 
     if curr_lives < state.lives:
         reward -= 10000  # Massive penalty for death
 
-    state.score = curr_score
-    state.lives = curr_lives
+    state.score        = curr_score
+    state.lives        = curr_lives
+    state.xscroll      = curr_xscroll
     state.enemy_hp_sum = curr_enemy_hp_sum
-    state.cores = curr_cores
     return reward
 
 
@@ -194,14 +177,14 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                        else [str(i) for i in range(len(action_table))]
     num_actions = len(action_table)
 
+    init_xscroll = initial_info.get("xscroll", 0)
     committed = State(
         emu_state=initial_emu_state,
-        xscroll=initial_info.get("xscroll", 0),
+        xscroll=init_xscroll,
         score=initial_info.get("score", 0),
         lives=initial_info.get("lives", 0),
-        max_x_reached=initial_info.get("xscroll", 0),
-        enemy_hp_sum=get_enemy_hp_sum(env),
-        cores=get_cores(env),
+        max_x_reached=init_xscroll,
+        enemy_hp_sum=get_enemy_hp_sum(env.get_ram(), init_xscroll, level),
     )
     committed_actions = []
 
@@ -216,7 +199,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
     t_start = time.time()
 
     if verbose:
-        print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'ScRew':>6} {'HPRew':>6} {'CoreRew':>8} {'Time':>6}")
+        print(f"\n{'Step':>5} {'Action':>6} {'Reward':>8} {'ScRew':>6} {'HPRew':>6} {'DistRew':>8} {'Time':>6}")
         print("-" * 55)
 
     while len(committed_actions) < max_steps:
@@ -273,8 +256,6 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
                 print(f"\n  🎯 Rollout found a WIN! Committing full sequence...")
             actions_to_commit = winning_seq
         elif best_died:
-            if verbose:
-                print(f"  ☠️  All {rollouts} futures end in death! Trap detected! Forcing backtrack...")
             stale_count = patience # Force rewind
             actions_to_commit = []
         else:
@@ -324,7 +305,7 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             if verbose and ((step_num // 10) > (prev_step_num // 10) or committed.done or found_win):
                 print(f"{step_num:5d} {first_action_name:>6} "
                       f"{committed.cumulative_reward:8.2f} "
-                      f"{committed.score_reward:6.1f} {committed.enemy_hp_reward:6.1f} {committed.cores_reward:8.1f} "
+                      f"{committed.score_reward:6.1f} {committed.enemy_hp_reward:6.1f} {committed.distance_reward:8.1f} "
                       f"{elapsed:5.1f}s")
 
         # BACKTRACK!
@@ -336,20 +317,14 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             rewind_amount = (patience // 2) * rewind_count
             rewind_to = max(0, best_checkpoint_idx - rewind_amount)
 
-            if verbose:
-                print(f"\n  ⏪ REWIND #{rewind_count}: Stuck/Trap! "
-                      f"Rewinding from step {len(committed_actions)} back to step {rewind_to} "
-                      f"(best was {best_checkpoint_idx})")
-
             # Replay to rewind point
             replay_state = State(
                 emu_state=initial_emu_state,
-                xscroll=initial_info.get("xscroll", 0),
+                xscroll=init_xscroll,
                 score=initial_info.get("score", 0),
                 lives=initial_info.get("lives", 0),
-                max_x_reached=initial_info.get("xscroll", 0),
-                enemy_hp_sum=get_enemy_hp_sum(env),
-        cores=get_cores(env),
+                max_x_reached=init_xscroll,
+                enemy_hp_sum=get_enemy_hp_sum(env.get_ram(), init_xscroll, level),
             )
 
             for act in committed_actions[:rewind_to]:
@@ -386,9 +361,6 @@ def search_and_play(env, initial_emu_state: bytes, initial_info: dict,
             best_checkpoint = committed.clone()
             best_checkpoint_idx = len(committed_actions)
 
-            if verbose:
-                print(f"  → Injected random action {action_names[random_action]}, "
-                      f"now at step {len(committed_actions)} (max_trap_idx: {max_trap_idx})\n")
 
     return committed_actions, committed, total_rollout_evals
 
@@ -465,8 +437,10 @@ def replay_and_record(env, initial_emu_state: bytes, initial_info: dict, actions
 
 def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
-    parser.add_argument("--state", type=str, default="main/states/Level1_x3022_step5543_boss_spread.state",
-                        help="State name (e.g. Level2) or path to .state file")
+    parser.add_argument("--level", type=int, default=1, choices=[1, 2],
+                        help="Game level (1=Contra-Nes, 2=ContraForce-Nes)")
+    parser.add_argument("--state", type=str, default=None,
+                        help="Retro state name or path to .state file (default: Level1 for both levels)")
     parser.add_argument("--rollouts", type=int, default=512)
     parser.add_argument("--rollout-len", type=int, default=16)
     parser.add_argument("--commit-steps", type=int, default=16)
@@ -483,29 +457,28 @@ def main():
     max_steps = args.max_steps
     max_time = args.max_time
     save_gif = not args.no_gif
+    level = args.level
 
     # Make absolutely sure we get different numpy random streams each run
     np.random.seed(int(time.time() * 1000) % (2**32))
 
     import gzip
 
-    import re
-    state_arg = args.state
+    # Default state per level
+    default_state = DEFAULT_STATE_BY_LEVEL[level]
+    state_arg = args.state if args.state is not None else default_state
+
     if state_arg.endswith(".state"):
-        # File path
+        # File path to a custom saved state
         with gzip.open(state_arg, "rb") as f:
             custom_state_data = f.read()
         state_label = os.path.basename(state_arg)[:-6]
-        m = re.search(r"Level(\d+)", state_label, re.IGNORECASE)
-        init_state = m.group(0) if m else "Level1"
+        init_state = "Level1"
     else:
-        # Named retro state (e.g. "Level2")
+        # Named retro state (e.g. "Level1")
         custom_state_data = None
         init_state = state_arg
         state_label = state_arg
-
-    m = re.search(r"Level(\d+)", state_label, re.IGNORECASE)
-    level = int(m.group(1)) if m else 1
 
     env = retro.make(
         game=GAME, state=init_state,
@@ -527,8 +500,9 @@ def main():
     print("=" * 70)
     print("Playfun — Monte Carlo Search with Backtracking")
     print("=" * 70)
+    print(f"  Game:               {GAME}")
+    print(f"  Level:              {level}")
     print(f"  State:              {state_arg}")
-    print(f"  Level:              {level} (inferred)")
     print(f"  Skip:               {SKIP}")
     print(f"  Rollouts/Step:      {rollouts} (random sequences evaluated)")
     print(f"  Rollout Length:     {rollout_len} actions ({rollout_len * SKIP} frames)")

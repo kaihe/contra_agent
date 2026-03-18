@@ -1,5 +1,5 @@
 # Project: Contra NES AI (RL)
-- Game: Contra (NES)
+- Game: Contra (NES) in experimental dir of stable-retro
 - Action Space: MultiBinary (NES controller buttons)
 - Library: Stable-Baselines3 + Gym Retro
 - Goal: Train PPO agent to maximize score in Level 1
@@ -15,8 +15,4 @@
 - `main/test.py`: Testing and recording script
 - `main/contra_wrapper.py`: Custom gym wrapper
 
-## ROM Setup
-The Contra Force ROM must be imported manually:
-```bash
-python -m retro.import /path/to/Contra\ Force\ \(USA\).nes
 ```

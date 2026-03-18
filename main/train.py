@@ -10,17 +10,18 @@ Usage:
 
 import glob
 import os
-import gzip
 
 import warnings
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 
 import gymnasium as gym
 import numpy as np
+import torch as th
 import stable_retro as retro
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.utils import obs_as_tensor
 
 
 class LatestCheckpointCallback(CheckpointCallback):
@@ -46,7 +47,7 @@ from contra_wrapper import create_env, save_config_to_model
 # CONFIG
 # =============================================================================
 
-NUM_ENV = 32
+NUM_ENV = 16
 BATCH_SIZE = 2048
 LOG_DIR = "logs"
 SAVE_DIR = "trained_models"
@@ -89,10 +90,12 @@ class TensorboardCallback(BaseCallback):
         self.episode_steps = []
         self.episode_distance_rewards = []
         self.episode_score_rewards = []
+        self.episode_death_rewards = []
+        self.episode_game_result_rewards = []
+        self.episode_enemy_progress_rewards = []
         self.end_reasons = {"time_out": 0, "game_over": 0, "win": 0}
 
     def _on_step(self) -> bool:
-        # Check for episode end in each environment
         for i, info in enumerate(self.locals.get("infos", [])):
             if "episode_max_x" in info:
                 self.episode_max_x.append(info["episode_max_x"])
@@ -101,11 +104,13 @@ class TensorboardCallback(BaseCallback):
                 self.episode_steps.append(info.get("episode_steps", 1))
                 self.episode_distance_rewards.append(info.get("episode_distance_reward", 0))
                 self.episode_score_rewards.append(info.get("episode_score_reward", 0))
+                self.episode_death_rewards.append(info.get("episode_death_reward", 0))
+                self.episode_game_result_rewards.append(info.get("episode_game_result_reward", 0))
+                self.episode_enemy_progress_rewards.append(info.get("episode_enemy_progress_reward", 0))
                 reason = info.get("episode_end_reason", "")
                 if reason in self.end_reasons:
                     self.end_reasons[reason] += 1
 
-        # Log averages every 100 episodes
         if len(self.episode_max_x) >= 100:
             self.logger.record("contra/mean_max_x", np.mean(self.episode_max_x))
             self.logger.record("contra/mean_actions", np.mean(self.episode_steps))
@@ -113,20 +118,97 @@ class TensorboardCallback(BaseCallback):
             self.logger.record("contra/mean_reward", np.mean(self.episode_rewards))
             self.logger.record("contra/reward_distance", np.mean(self.episode_distance_rewards))
             self.logger.record("contra/reward_score", np.mean(self.episode_score_rewards))
+            self.logger.record("contra/reward_death", np.mean(self.episode_death_rewards))
+            self.logger.record("contra/reward_game_result", np.mean(self.episode_game_result_rewards))
+            self.logger.record("contra/reward_enemy_progress", np.mean(self.episode_enemy_progress_rewards))
             total = sum(self.end_reasons.values()) or 1
             self.logger.record("contra/end_time_out", self.end_reasons["time_out"] / total)
             self.logger.record("contra/end_game_over", self.end_reasons["game_over"] / total)
             self.logger.record("contra/end_win", self.end_reasons["win"] / total)
-            # Clear for next batch
             self.episode_max_x = []
             self.episode_scores = []
             self.episode_rewards = []
             self.episode_steps = []
             self.episode_distance_rewards = []
             self.episode_score_rewards = []
+            self.episode_death_rewards = []
+            self.episode_game_result_rewards = []
+            self.episode_enemy_progress_rewards = []
             self.end_reasons = {"time_out": 0, "game_over": 0, "win": 0}
 
         return True
+
+
+# =============================================================================
+# RND CURIOSITY REWARD
+# =============================================================================
+
+class _RNDEnvAdapter:
+    """Minimal adapter so rllte.RND can infer obs/action shape from SB3 VecEnv.
+
+    rllte expects channels-first obs, but ContraWrapper exposes (84, 84, 4).
+    We report (4, 84, 84) here so the CNN encoder is built correctly.
+    """
+    def __init__(self, vec_env, stack: int = 4):
+        self.observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(stack, 84, 84), dtype=np.uint8
+        )
+        self.action_space = vec_env.action_space
+        self.num_envs = vec_env.num_envs
+        self.unwrapped = self
+
+
+class RNDCallback(BaseCallback):
+    """Augments rollout rewards with RND intrinsic curiosity before each policy update.
+
+    Flow (per rollout):
+      1. Transpose buffer observations to channels-first (n_steps, n_envs, 4, 84, 84)
+      2. Call rnd.compute() → normalised intrinsic rewards (n_steps, n_envs)
+      3. Add beta * intrinsic to rollout_buffer.rewards
+      4. Recompute GAE returns/advantages with the modified rewards
+    """
+
+    def __init__(self, rnd, beta: float = 0.5, verbose: int = 0):
+        super().__init__(verbose)
+        self.rnd = rnd
+        self.beta = beta
+        self._last_dones = None
+
+    def _on_step(self) -> bool:
+        # Capture dones from the most recent env step for GAE recomputation.
+        self._last_dones = self.locals.get("dones")
+        return True
+
+    def _on_rollout_end(self) -> None:
+        buf = self.model.rollout_buffer
+        n_steps, n_envs = buf.rewards.shape
+
+        # (n_steps, n_envs, 84, 84, 4) → (n_steps, n_envs, 4, 84, 84), float32 [0,1]
+        obs_chw = np.transpose(buf.observations, (0, 1, 4, 2, 3)).astype(np.float32) / 255.0
+        obs_t = th.as_tensor(obs_chw, device=self.rnd.device)
+
+        samples = {
+            "observations": obs_t,
+            "next_observations": obs_t,          # RND only uses next_obs
+            "actions": th.as_tensor(buf.actions),
+            "rewards": th.as_tensor(buf.rewards),
+            "terminateds": th.zeros(n_steps, n_envs, device=self.rnd.device),
+            "truncateds": th.zeros(n_steps, n_envs, device=self.rnd.device),
+        }
+
+        intrinsic = self.rnd.compute(samples, sync=True).cpu().numpy()
+        buf.rewards += self.beta * intrinsic
+
+        # Recompute GAE returns/advantages with modified rewards
+        with th.no_grad():
+            last_obs_t = obs_as_tensor(self.model._last_obs, self.model.device)
+            last_values = self.model.policy.predict_values(last_obs_t)
+        dones = self._last_dones if self._last_dones is not None \
+            else np.zeros(n_envs, dtype=bool)
+        buf.compute_returns_and_advantage(last_values=last_values, dones=dones)
+
+        if self.verbose:
+            self.logger.record("rnd/mean_intrinsic", float(intrinsic.mean()))
 
 
 # =============================================================================
@@ -152,47 +234,6 @@ def linear_schedule(initial_value, final_value=0.0):
         return final_value + progress * (initial_value - final_value)
 
     return scheduler
-
-
-# =============================================================================
-# RANDOM STATE WRAPPER
-# =============================================================================
-
-class RandomStateWrapper(gym.Wrapper):
-    """On each reset, load a randomly chosen state from a list."""
-
-    def __init__(self, env, game, states):
-        super().__init__(env)
-        self.game = game
-        self.states = states
-        # Preload all state data (supports both state names and .state file paths)
-        self.state_data = []
-        for s in states:
-            if s.endswith(".state") and os.path.isfile(s):
-                # Custom state file path
-                with gzip.open(s, "rb") as f:
-                    self.state_data.append(f.read())
-            else:
-                # Built-in retro state name
-                path = retro.data.get_file_path(game, f"{s}.state",
-                                                inttype=retro.data.Integrations.ALL)
-                with gzip.open(path, "rb") as f:
-                    self.state_data.append(f.read())
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        # Load a random state
-        idx = np.random.randint(len(self.state_data))
-        self.unwrapped.em.set_state(self.state_data[idx])
-        self.unwrapped.data.update_ram()
-        # Step once to sync observation with loaded state
-        obs, _, _, _, info = self.env.step(
-            np.zeros(self.env.action_space.shape, dtype=self.env.action_space.dtype)
-        )
-        return obs, info
-
-    def get_ram(self):
-        return self.unwrapped.get_ram()
 
 
 # =============================================================================
@@ -230,8 +271,6 @@ def make_env(game, states, seed=0, random_start_frames=0):
             render_mode=None,
             inttype=retro.data.Integrations.ALL,
         )
-        if len(states) > 1:
-            env = RandomStateWrapper(env, game=game, states=states)
         env = create_env(env, random_start_frames=random_start_frames, level=level)
         env = Monitor(env)
         return env
@@ -257,6 +296,10 @@ def main():
                         help="Max random no-op frames at episode start (0=disabled)")
     parser.add_argument("--name", type=str, default="ppo_contra",
                         help="Experiment name (used for tensorboard and checkpoints)")
+    parser.add_argument("--rnd", action="store_true",
+                        help="Enable RND curiosity reward (rllte-core)")
+    parser.add_argument("--rnd-beta", type=float, default=0.5,
+                        help="Intrinsic reward injection scale (0=off, 1=full weight)")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -272,6 +315,8 @@ def main():
     print(f"  Save dir:     {SAVE_DIR}")
     if args.resume:
         print(f"  Resume:       {args.resume}")
+    if args.rnd:
+        print(f"  RND:          enabled (beta={args.rnd_beta})")
     print("=" * 70)
 
     # Create vectorized environment
@@ -312,6 +357,19 @@ def main():
             tensorboard_log=LOG_DIR,
         )
 
+    # RND curiosity module (optional)
+    callbacks = []
+    if args.rnd:
+        from rllte.xplore.reward import RND
+        rnd = RND(
+            envs=_RNDEnvAdapter(env),
+            device="cuda",
+            beta=1.0,          # internal normalization scale; injection scale is rnd_beta
+            kappa=0.0,
+            obs_norm_type=None, # skip costly normalization warmup
+        )
+        callbacks.append(RNDCallback(rnd, beta=args.rnd_beta, verbose=1))
+
     # Callbacks
     checkpoint_interval = 125000  # 125000 * 32 envs = 4M steps
     checkpoint_callback = LatestCheckpointCallback(
@@ -321,6 +379,7 @@ def main():
     )
     entropy_callback = EntropyScheduleCallback(entropy_schedule)
     tensorboard_callback = TensorboardCallback()
+    callbacks += [checkpoint_callback, entropy_callback, tensorboard_callback]
 
     # Training
     # When resuming, use cumulative total_timesteps so schedules continue from
@@ -329,7 +388,7 @@ def main():
     total_timesteps = start_timesteps + args.timesteps
     model.learn(
         total_timesteps=total_timesteps,
-        callback=[checkpoint_callback, entropy_callback, tensorboard_callback],
+        callback=callbacks,
         tb_log_name=args.name,
         progress_bar=True,
         reset_num_timesteps=not bool(args.resume),

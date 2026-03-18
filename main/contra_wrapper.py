@@ -1,15 +1,4 @@
-"""
-Contra (NES) Custom Wrapper for Stable-Baselines3
-==================================================
-
-Single wrapper: ContraWrapper
-  - Discrete(7) action space: human-frequency directional combos (no forced fire)
-  - Frame skip (8x) + frame stacking (4)
-  - Reward shaping: position delta, score delta, death penalty, terminal bonuses
-  - Max-pool last 2 raw frames (flicker removal)
-  - Grayscale + resize to 84x84 + 4-frame stack -> (84, 84, 4)
-  - Optional monitor recording of raw frames
-"""
+"""Contra (NES) gym wrapper: discrete actions, frame skip/stack, reward shaping."""
 
 import cv2
 import gymnasium as gym
@@ -19,35 +8,27 @@ import zipfile
 
 
 # NES buttons: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
-# Index:        0  1     2       3      4   5     6     7      8
-#
 # Top-7 human-frequency combos (derived from 55 recorded gameplay traces).
 # Fire (B) is not forced on every action — agent chooses when to shoot.
+# Up / Up+Fire added for Level 2 (top-down "walk into screen" perspective).
 ACTION_TABLE = [
-    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 0: Right              R    (31.6%)
-    [1, 0, 0, 0, 0, 0, 0, 1, 0],  # 1: Right+Fire         RF   (15.6%)
-    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 2: Down               D    ( 7.4%)
-    [0, 0, 0, 0, 0, 0, 0, 1, 1],  # 3: Right+Jump         RJ   ( 6.1%)
-    [1, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down+Fire          DF   ( 5.6%)
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 5: Fire               F    ( 5.2%)
-    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 6: Left               L    ( 3.2%)
+    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 0: Right       R  (31.6%)
+    [1, 0, 0, 0, 0, 0, 0, 1, 0],  # 1: Right+Fire  RF (15.6%)
+    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 2: Down        D  ( 7.4%)
+    [0, 0, 0, 0, 0, 0, 0, 1, 1],  # 3: Right+Jump  RJ ( 6.1%)
+    [1, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down+Fire   DF ( 5.6%)
+    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 5: Fire        F  ( 5.2%)
+    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 6: Left        L  ( 3.2%)
+    [0, 0, 0, 0, 1, 0, 0, 0, 0],  # 7: Up          U
 ]
-ACTION_NAMES = ["R", "RF", "D", "RJ", "DF", "F", "L"]
+ACTION_NAMES = ["R", "RF", "D", "RJ", "DF", "F", "L", "U"]
 NUM_ACTIONS = len(ACTION_TABLE)
 
 
-# =============================================================================
-# MODEL CONFIG (embedded in .zip)
-# =============================================================================
-
 def save_config_to_model(model_path: str, skip: int = 8, stack: int = 4) -> None:
     """Embed contra_config.json into an SB3 model .zip file."""
-    config = {
-        "action_table": ACTION_TABLE,
-        "action_names": ACTION_NAMES,
-        "skip": skip,
-        "stack": stack,
-    }
+    config = {"action_table": ACTION_TABLE, "action_names": ACTION_NAMES,
+              "skip": skip, "stack": stack}
     with zipfile.ZipFile(model_path, "a") as zf:
         zf.writestr("contra_config.json", json.dumps(config, indent=2))
 
@@ -71,10 +52,6 @@ def apply_config(config: dict) -> None:
     NUM_ACTIONS = len(ACTION_TABLE)
 
 
-# =============================================================================
-# FFMPEG MONITOR
-# =============================================================================
-
 class Monitor:
     """Record raw RGB frames and/or display live via pygame."""
 
@@ -82,9 +59,7 @@ class Monitor:
         self.render = render
         self.saved_path = saved_path
         self.frames = [] if saved_path else None
-        self.screen = None
         self.skip = skip
-
         if render:
             import pygame
             self._pygame = pygame
@@ -109,8 +84,6 @@ class Monitor:
     def close(self):
         if self.frames is not None and self.saved_path:
             import imageio
-            # Keep 1 frame per agent action, play at ~2× real speed
-            # NES = 60 fps → real ms/action = 1000*skip/60; halve for 2× speed
             frames = self.frames[::self.skip]
             duration = round(1000 * self.skip / 60 / 2)
             imageio.mimsave(self.saved_path, frames, duration=duration, loop=1)
@@ -118,39 +91,74 @@ class Monitor:
             self._pygame.quit()
 
 
-# =============================================================================
-# PREPROCESSING
-# =============================================================================
-
 def process_frame(frame):
-    """Convert RGB frame to grayscale 84x84, shape (1, 84, 84) as uint8."""
-    if frame is not None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        resized = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_AREA)
-        return resized[None, :, :]  # (1, 84, 84)
-    return np.zeros((1, 84, 84), dtype=np.uint8)
+    """RGB → grayscale 84×84, shape (1, 84, 84) uint8."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    return cv2.resize(gray, (84, 84), interpolation=cv2.INTER_AREA)[None, :, :]
 
 
+# ---------------------------------------------------------------------------
+# Pure reward helpers — usable outside ContraWrapper (e.g. MC playfun)
+# ---------------------------------------------------------------------------
+
+def get_enemy_hp_sum(ram, xscroll: int, level: int) -> int:
+    """Level-aware sum of all active enemy HP."""
+    if level == 1:
+        if xscroll < 3072:
+            return 0
+        return int(ram[1412]) + int(ram[1414]) + int(ram[1415])
+    if level == 2:
+        core = 0 if int(ram[1414]) >= 240 else int(ram[1414])
+        if xscroll < 1280:
+            return core
+        boss_gun_addrs = [1409, 1410, 1411, 1412, 1413]
+        total = core + sum(0 if int(ram[a]) >= 240 else int(ram[a]) for a in boss_gun_addrs)
+        total += int(ram[1479])
+        return total
+    raise ValueError(f"Unsupported level: {level}")
 
 
-# =============================================================================
-# UNIFIED WRAPPER: REWARD SHAPING + FRAME SKIP + STACKING
-# =============================================================================
+def reward_enemy_progress(prev_hp_sum: int, curr_hp_sum: int) -> float:
+    """Reward for dealing damage; capped at 16 to avoid transition spikes."""
+    hit_diff = prev_hp_sum - curr_hp_sum
+    if hit_diff <= 0:
+        return 0.0
+    return min(hit_diff, 16) * 0.5
+
+
+def reward_distance(curr_xscroll: int, prev_xscroll: int,
+                    max_x_reached: int, idle_steps: int,
+                    level: int) -> tuple[float, int, int]:
+    """Returns (reward, updated_max_x_reached, updated_idle_steps)."""
+    if level == 1:
+        if curr_xscroll > max_x_reached:
+            idle_steps = 0
+            max_x_reached = curr_xscroll
+        else:
+            idle_steps += 1
+        if idle_steps > 20 and curr_xscroll < 3072:
+            r = -0.05
+        else:
+            r = max(min(curr_xscroll - prev_xscroll, 3.0), 0) * 0.1
+        return r, max_x_reached, idle_steps
+    if level == 2:
+        if curr_xscroll > max_x_reached:
+            rooms_advanced = (curr_xscroll - max_x_reached) // 256
+            max_x_reached = curr_xscroll
+            return rooms_advanced * 5.0, max_x_reached, idle_steps
+        return 0.0, max_x_reached, idle_steps
+    raise ValueError(f"Unsupported level: {level}")
+
 
 class ContraWrapper(gym.Wrapper):
-    """Single wrapper combining reward shaping, frame skip, and frame stacking.
-
-    Each agent step:
-      1. Map discrete action to NES multi-binary buttons via ACTION_TABLE
-      2. Hold buttons for `skip` emulator frames
-      3. Max-pool last 2 raw RGB frames (flicker removal)
-      4. Grayscale + resize to 84x84, push into frame stack
+    """Reward shaping + frame skip + stacking for Contra NES.
 
     Observation: (84, 84, stack) uint8 channels-last for SB3 CnnPolicy.
+    Actions:     Discrete(7) mapped via ACTION_TABLE.
     """
 
     def __init__(self, env, monitor=None, reset_round=True, random_start_frames=0,
-                 warmup_frames=120, skip=8, stack=4, frame_callback=None, level=1):
+                 warmup_frames=120, skip=8, stack=4, level=1):
         super().__init__(env)
         self._no_op = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
         self._action_table = np.array(ACTION_TABLE, dtype=env.action_space.dtype)
@@ -160,246 +168,157 @@ class ContraWrapper(gym.Wrapper):
         self.warmup_frames = warmup_frames
         self.skip = skip
         self.stack = stack
-        self.frame_callback = frame_callback
         self.level = level
+        self.max_episode_steps = 4000
 
-        # Discrete action space
         self.action_space = gym.spaces.Discrete(NUM_ACTIONS)
-
-        # Frame stack: (stack, 84, 84) internal, exposed as (84, 84, stack)
         self.states = np.zeros((stack, 84, 84), dtype=np.uint8)
         self.observation_space = gym.spaces.Box(
             low=0, high=255, shape=(84, 84, stack), dtype=np.uint8
         )
 
-        # Reward tracking state
         self.prev_xscroll = 0
         self.prev_score = 0
         self.prev_lives = 0
-        self.start_lives = 2
         self.max_x_reached = 0
         self.total_timesteps = 0
-        self.max_episode_steps = 4000
         self.idle_steps = 0
         self.prev_enemy_hp_sum = 0
-        self.prev_cores = 0
+        self._reset_episode_stats()
 
-        # Episode stats for logging
-        self.episode_score = 0
-        self.episode_reward = 0
-        self.episode_distance_reward = 0
-        self.episode_score_reward = 0
-        self.episode_end_reason = ""
+    def _reset_episode_stats(self):
+        self.ep = {
+            "reward": 0.0,
+            "distance_reward": 0.0,
+            "score_reward": 0.0,
+            "death_reward": 0.0,
+            "game_result_reward": 0.0,
+            "enemy_progress_reward": 0.0,
+            "end_reason": "",
+        }
 
     def _get_obs(self):
-        """Return (84, 84, stack) channels-last."""
         return np.transpose(self.states, (1, 2, 0))
 
-    def _get_enemy_hp_sum(self):
-        """Sum of all 16 enemy HP slots at RAM[0x578..0x587]. Works for any level."""
+    def _get_enemy_hp_sum(self, ram, xscroll=0):
+        return get_enemy_hp_sum(ram, xscroll, self.level)
+
+    def _reward_distance(self, curr_xscroll):
+        r, self.max_x_reached, self.idle_steps = reward_distance(
+            curr_xscroll, self.prev_xscroll, self.max_x_reached, self.idle_steps, self.level
+        )
+        return r
+
+    def _reward_enemy_progress(self, curr_enemy_hp_sum):
+        return reward_enemy_progress(self.prev_enemy_hp_sum, curr_enemy_hp_sum)
+
+    def _compute_rewards(self, info, done):
         ram = self.unwrapped.get_ram()
-        return sum(int(ram[1400 + i]) for i in range(16))
-
-    def _get_cores(self):
-        """Wall cores remaining at RAM[0x0086]."""
-        return int(self.unwrapped.get_ram()[0x0086])
-
-    def _compute_reward(self, info):
-        """Dispatch to the level-specific reward function."""
-        if self.level == 1:
-            return self._reward_level1(info)
-        else:
-            return self._reward_level2plus(info)
-
-    def _reward_level1(self, info):
-        """Level 1: xscroll progress + score + idle penalty + enemy hit reward."""
-        reward = 0.0
-
         curr_xscroll = info.get("xscroll", self.prev_xscroll)
         curr_score = info.get("score", 0)
         curr_lives = info.get("lives", 0)
-        curr_enemy_hp_sum = self._get_enemy_hp_sum()
-        curr_cores = self._get_cores()
+        curr_enemy_hp_sum = self._get_enemy_hp_sum(ram, curr_xscroll)
 
-        self.episode_score = curr_score
 
-        # Idle detection: no progress in xscroll for too long
-        if curr_xscroll > self.max_x_reached:
-            self.idle_steps = 0
-            self.max_x_reached = curr_xscroll
-        else:
-            self.idle_steps += 1
+        end_reason = ""
+        result_reward = 0.0
+        if not done and self.total_timesteps >= self.max_episode_steps:
+            done = True
+            end_reason = "time_out"
+            result_reward = -50.0
+        elif done:
+            end_reason = "win" if curr_lives > 0 else "game_over"
+            result_reward = 100.0 if curr_lives > 0 else 0.0
 
-        # Don't penalize idling during the stationary boss fight
-        if self.idle_steps > 20 and curr_xscroll < 3072:
-            reward -= 0.05
-        else:
-            # Position reward: forward progress only
-            pos_delta = curr_xscroll - self.prev_xscroll
-            pos_reward = max(min(pos_delta, 3.0), 0) * (1/10)
-            self.episode_distance_reward += pos_reward
-            reward += pos_reward
+        rewards = {
+            "distance":         self._reward_distance(curr_xscroll),
+            "score":            max(curr_score - self.prev_score, 0),
+            "death":            -20.0 if curr_lives < self.prev_lives else 0.0,
+            "enemy_progress":   self._reward_enemy_progress(curr_enemy_hp_sum),
+            "game_result":      result_reward,
+        }
 
-            # Score reward: positive delta only
-            score_delta = curr_score - self.prev_score
-            score_reward = max(score_delta, 0)
-            self.episode_score_reward += score_reward
-            reward += score_reward
-
-        # Enemy hit reward: any enemy HP decrease on any level
-        hit_diff = self.prev_enemy_hp_sum - curr_enemy_hp_sum
-        if hit_diff > 0:
-            reward += hit_diff * 0.5
-
-        # Wall cores reward
-        core_diff = self.prev_cores - curr_cores
-        if core_diff > 0:
-            reward += core_diff * 5.0
-
-        # Death penalty
-        if curr_lives < self.prev_lives:
-            reward -= 20
+        if end_reason:
+            self.ep["end_reason"] = end_reason
 
         self.prev_xscroll = curr_xscroll
         self.prev_score = curr_score
         self.prev_lives = curr_lives
         self.prev_enemy_hp_sum = curr_enemy_hp_sum
-        self.prev_cores = curr_cores
 
-        return reward
-
-    def _reward_level2plus(self, info):
-        """Level 2+: score + enemy hit + cores reward. No xscroll signal."""
-        reward = 0.0
-
-        curr_score = info.get("score", 0)
-        curr_lives = info.get("lives", 0)
-        curr_enemy_hp_sum = self._get_enemy_hp_sum()
-        curr_cores = self._get_cores()
-
-        self.episode_score = curr_score
-
-        score_delta = curr_score - self.prev_score
-        score_reward = max(score_delta, 0)
-        self.episode_score_reward += score_reward
-        reward += score_reward
-
-        # Enemy hit reward
-        hit_diff = self.prev_enemy_hp_sum - curr_enemy_hp_sum
-        if hit_diff > 0:
-            reward += hit_diff * 0.5
-
-        # Wall cores reward
-        core_diff = self.prev_cores - curr_cores
-        if core_diff > 0:
-            reward += core_diff * 5.0
-
-        if curr_lives < self.prev_lives:
-            reward -= 20
-
-        self.prev_score = curr_score
-        self.prev_lives = curr_lives
-        self.prev_enemy_hp_sum = curr_enemy_hp_sum
-        self.prev_cores = curr_cores
-
-        return reward
+        return rewards, done
 
     def reset(self, **kwargs):
         observation, info = self.env.reset(**kwargs)
 
         self.prev_xscroll = info.get("xscroll", 0)
-        self.start_lives = info.get("lives", 2)
-        self.prev_lives = self.start_lives
+        self.prev_lives = info.get("lives", 2)
         self.prev_score = 0
         self.max_x_reached = self.prev_xscroll
         self.total_timesteps = 0
         self.idle_steps = 0
-        self.prev_enemy_hp_sum = self._get_enemy_hp_sum()
-        self.prev_cores = self._get_cores()
+        self._reset_episode_stats()
 
-        self.episode_score = 0
-        self.episode_reward = 0
-        self.episode_distance_reward = 0
-        self.episode_score_reward = 0
-        self.episode_end_reason = ""
-
-        # Warmup: advance past spawn animation so player is controllable
         for _ in range(self.warmup_frames):
             observation, _, _, _, info = self.env.step(self._no_op)
             if self.monitor:
                 self.monitor.record(observation)
 
-        # Re-sync tracking state after warmup
         self.prev_xscroll = info.get("xscroll", 0)
         self.prev_score = info.get("score", 0)
         self.max_x_reached = self.prev_xscroll
 
-        # Random startup freeze (additional, on top of warmup)
         if self.random_start_frames > 0:
-            freeze_frames = np.random.randint(0, self.random_start_frames + 1)
-            for _ in range(freeze_frames):
+            for _ in range(np.random.randint(0, self.random_start_frames + 1)):
                 observation, _, _, _, info = self.env.step(self._no_op)
                 if self.monitor:
                     self.monitor.record(observation)
 
-        # Initialize frame stack with processed current frame
-        processed = process_frame(observation)
-        self.states = np.concatenate([processed for _ in range(self.stack)], axis=0)
+        ram = self.unwrapped.get_ram()
+        self.prev_enemy_hp_sum = self._get_enemy_hp_sum(ram, self.prev_xscroll)
+
+        self.states[:] = process_frame(observation)
         return self._get_obs(), info
 
     def step(self, action):
-        # Map discrete action to NES multi-binary buttons
         nes_action = self._action_table[action]
         last_two = [None, None]
         done = False
 
-        # Hold buttons for (skip-1) frames, then 1 no-op release frame
         for i in range(self.skip):
             act = nes_action.copy()
-            # Release B button (index 0) on the last frame to allow rapid fire
             if i == self.skip - 1:
-                act[0] = 0
-            
+                act[0] = 0  # Release B on last frame for rapid fire
             state, _, term, trunc, info = self.env.step(act)
             if self.monitor:
                 self.monitor.record(state)
-            if self.frame_callback:
-                self.frame_callback(nes_action, info)
             last_two[0], last_two[1] = last_two[1], state
             if term or trunc:
                 done = True
                 break
 
-        # Compute reward once for the entire agent step
-        reward = self._compute_reward(info)
         self.total_timesteps += 1
+        rewards, done = self._compute_rewards(info, done)
+        reward = sum(rewards.values())
 
-        if not done and self.total_timesteps >= self.max_episode_steps:
-            done = True
-            self.episode_end_reason = "time_out"
-            # Reduced timeout penalty to encourage exploration
-            reward -= 50
-        elif done:
-            if info.get("lives", 0) > 0:
-                self.episode_end_reason = "win"
-                reward += 100
-            else:
-                self.episode_end_reason = "game_over"
-        self.episode_reward += reward
+        self.ep["reward"] += reward
+        self.ep["distance_reward"] += rewards["distance"]
+        self.ep["score_reward"] += rewards["score"]
+        self.ep["death_reward"] += rewards["death"]
+        self.ep["game_result_reward"] += rewards["game_result"]
+        self.ep["enemy_progress_reward"] += rewards["enemy_progress"]
 
-        # Max-pool last 2 raw frames, grayscale + resize, push into stack
         pooled = np.maximum(last_two[0], last_two[1]) if last_two[0] is not None else last_two[1]
         self.states[:-1] = self.states[1:]
         self.states[-1] = process_frame(pooled)[0]
 
         if done:
-            info["episode_max_x"] = self.max_x_reached
-            info["episode_score"] = self.episode_score
-            info["episode_reward"] = self.episode_reward
-            info["episode_steps"] = self.total_timesteps
-            info["episode_distance_reward"] = self.episode_distance_reward
-            info["episode_score_reward"] = self.episode_score_reward
-            info["episode_end_reason"] = self.episode_end_reason
+            info.update({
+                "episode_max_x":    self.max_x_reached,
+                "episode_score":    self.prev_score,
+                "episode_steps":    self.total_timesteps,
+                **{f"episode_{k}": v for k, v in self.ep.items()},
+            })
 
         if not self.reset_round:
             done = False
@@ -407,11 +326,8 @@ class ContraWrapper(gym.Wrapper):
         return self._get_obs(), reward, done, False, info
 
 
-# =============================================================================
-# CONVENIENCE FACTORY
-# =============================================================================
-
-def create_env(env, monitor=None, reset_round=True, random_start_frames=0, skip=8, stack=4, level=1):
+def create_env(env, monitor=None, reset_round=True, random_start_frames=0,
+               skip=8, stack=4, level=1):
     """Wrap a retro env with reward shaping + frame skip + stacking."""
     return ContraWrapper(env, monitor=monitor, reset_round=reset_round,
                          random_start_frames=random_start_frames,
