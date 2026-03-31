@@ -23,6 +23,17 @@ __pycache__/
 
 # IDE / local
 .claude/
+.vscode/
+.agent/
 
 # Traces
 *.npz
+!synthetic/action_bigram.npz
+
+# tmp files
+tmp/
+legacy/
+contra.egg-info/
+
+# External reference repo
+reference/

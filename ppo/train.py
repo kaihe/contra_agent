@@ -47,7 +47,7 @@ from contra_wrapper import create_env, save_config_to_model
 # CONFIG
 # =============================================================================
 
-NUM_ENV = 16
+NUM_ENV    = 16
 BATCH_SIZE = 2048
 LOG_DIR = "logs"
 SAVE_DIR = "trained_models"
@@ -85,59 +85,33 @@ class TensorboardCallback(BaseCallback):
     def __init__(self, verbose=0):
         super().__init__(verbose)
         self.episode_max_x = []
-        self.episode_scores = []
         self.episode_rewards = []
-        self.episode_steps = []
-        self.episode_distance_rewards = []
-        self.episode_score_rewards = []
-        self.episode_death_rewards = []
-        self.episode_game_result_rewards = []
-        self.episode_enemy_progress_rewards = []
         self.end_reasons = {"time_out": 0, "game_over": 0, "win": 0}
 
     def _on_step(self) -> bool:
-        for i, info in enumerate(self.locals.get("infos", [])):
+        for info in self.locals.get("infos", []):
             if "episode_max_x" in info:
                 self.episode_max_x.append(info["episode_max_x"])
-                self.episode_scores.append(info["episode_score"])
-                self.episode_rewards.append(info["episode_reward"])
-                self.episode_steps.append(info.get("episode_steps", 1))
-                self.episode_distance_rewards.append(info.get("episode_distance_reward", 0))
-                self.episode_score_rewards.append(info.get("episode_score_reward", 0))
-                self.episode_death_rewards.append(info.get("episode_death_reward", 0))
-                self.episode_game_result_rewards.append(info.get("episode_game_result_reward", 0))
-                self.episode_enemy_progress_rewards.append(info.get("episode_enemy_progress_reward", 0))
+                self.episode_rewards.append(info.get("episode_reward", 0))
+                
                 reason = info.get("episode_end_reason", "")
                 if reason in self.end_reasons:
                     self.end_reasons[reason] += 1
 
         if len(self.episode_max_x) >= 100:
             self.logger.record("contra/mean_max_x", np.mean(self.episode_max_x))
-            self.logger.record("contra/mean_actions", np.mean(self.episode_steps))
-            self.logger.record("contra/mean_score", np.mean(self.episode_scores))
             self.logger.record("contra/mean_reward", np.mean(self.episode_rewards))
-            self.logger.record("contra/reward_distance", np.mean(self.episode_distance_rewards))
-            self.logger.record("contra/reward_score", np.mean(self.episode_score_rewards))
-            self.logger.record("contra/reward_death", np.mean(self.episode_death_rewards))
-            self.logger.record("contra/reward_game_result", np.mean(self.episode_game_result_rewards))
-            self.logger.record("contra/reward_enemy_progress", np.mean(self.episode_enemy_progress_rewards))
+            
             total = sum(self.end_reasons.values()) or 1
             self.logger.record("contra/end_time_out", self.end_reasons["time_out"] / total)
             self.logger.record("contra/end_game_over", self.end_reasons["game_over"] / total)
             self.logger.record("contra/end_win", self.end_reasons["win"] / total)
+            
             self.episode_max_x = []
-            self.episode_scores = []
             self.episode_rewards = []
-            self.episode_steps = []
-            self.episode_distance_rewards = []
-            self.episode_score_rewards = []
-            self.episode_death_rewards = []
-            self.episode_game_result_rewards = []
-            self.episode_enemy_progress_rewards = []
             self.end_reasons = {"time_out": 0, "game_over": 0, "win": 0}
 
         return True
-
 
 # =============================================================================
 # RND CURIOSITY REWARD
