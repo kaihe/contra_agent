@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "8. Behavior Data Collection"
-parent: Experiments
+parent: Content
 nav_order: 8
 ---
 

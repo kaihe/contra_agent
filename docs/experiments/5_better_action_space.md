@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "5. Better Action Space"
-parent: Experiments
+parent: Content
 nav_order: 5
 ---
 

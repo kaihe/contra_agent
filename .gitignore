@@ -12,6 +12,7 @@
 
 # But allow docs assets (for GitHub Pages)
 !docs/assets/**/*.gif
+!docs/assets/**/*.mp4
 
 # Logs
 logs/

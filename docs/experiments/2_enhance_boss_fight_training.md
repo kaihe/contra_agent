@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "2. Enhance Boss Fight Training"
-parent: Experiments
+parent: Content
 nav_order: 2
 ---
 

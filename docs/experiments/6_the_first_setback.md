@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "6. The First Setback"
-parent: Experiments
+parent: Content
 nav_order: 6
 ---
 

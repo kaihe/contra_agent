@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "3. Action Test: Monte Carlo Search"
-parent: Experiments
+parent: Content
 nav_order: 3
 ---
 

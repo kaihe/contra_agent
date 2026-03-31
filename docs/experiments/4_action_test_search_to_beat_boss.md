@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "4. Action Test: MC search to beat boss"
-parent: Experiments
+parent: Content
 nav_order: 4
 ---
 

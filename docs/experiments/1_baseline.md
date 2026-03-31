@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "1. Baseline"
-parent: Experiments
+parent: Content
 nav_order: 1
 ---
 

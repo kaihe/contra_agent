@@ -1,7 +1,7 @@
 ---
 layout: default
 title: "7. Behavior Cloning — A New Baseline"
-parent: Experiments
+parent: Content
 nav_order: 7
 ---
 
