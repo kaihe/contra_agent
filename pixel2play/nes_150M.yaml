@@ -1,0 +1,84 @@
+shared:
+  output_path: ${USER}/policy_model/nes_150M
+  n_seq_timesteps: 200
+  frame_height: 192
+  frame_width: 192
+  text_tokenizer_config:
+    text_tokenizer_name: "gemma"
+    text_embedding_shape: [1, 768]
+    text_annotation_model_version: ["gemini-3-flash-preview"]
+  tokenizer:
+    type: "conv"
+    conv_tokenizer_config:
+      num_tokens: 1
+
+# Policy Model Configuration
+policy_model:
+  n_transformer_layers: 10
+  n_q_head: 16
+  n_kv_head: 16
+  n_thinking_tokens: 1
+  transformer_dim: &transformer_dim 1024
+  mask_block_size: 128
+  attention_history_len: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
+  n_kv_sink_tokens: 0
+  model_type: "dense"
+  action_decoder:
+    embed_dim: *transformer_dim
+
+
+stage3_finetune:
+  init:
+    random: false
+    stage3_model_path: /home/kaihe/code/open-p2p/checkpoints/150M/checkpoint-step=00500000.ckpt
+
+  optim:
+    learning_rate: 0.0001
+    weight_decay: 0.0001
+    beta_1: 0.9
+    beta_2: 0.999
+
+  validation_step_interval: 2_000_000
+  n_validation_steps: 20000
+  save_every_n_steps: 20000
+  n_training_steps: 200_000
+  accumulate_grad_batches: 1
+
+  training_dataset:
+    batch_size: &stage3_batch_size 8
+    local_prefix: dataset
+    always_labelled: true
+    warn_on_starvation: false
+    rand_augmentation:
+      fraction_augmented: 1.0
+      augmentations:
+        - spatial_transform
+        - color
+        - planckian
+        - iso_noise
+        - translation
+        - random_blur
+        - sharpness
+    n_preprocess_threads_per_gpu: 1
+    preprocessed_chunks_queue_size_per_gpu: 1
+    shuffle_buffer_size_per_gpu: 1900
+    dataset_worker_num_workers_per_gpu: 1
+    dataset_worker_prefetch_factor: 1
+    shuffled_chunks_queue_size_per_gpu: 1
+
+  validation_datasets:
+    - batch_size: *stage3_batch_size
+      local_prefix: dataset
+      validation_name: "overall"
+      always_labelled: true
+      n_preprocess_threads_per_gpu: 1
+      preprocessed_chunks_queue_size_per_gpu: 1
+      shuffled_chunks_queue_size_per_gpu: 1
+      dataset_worker_prefetch_factor: 1
+      warn_on_starvation: false
+
+
+wandb:
+  enabled: false
+  project: "policy_model"
+  exp_name: "contra-nes-dev"

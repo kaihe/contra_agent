@@ -1,0 +1,111 @@
+syntax = "proto3";
+package elefant.training_data.video_annotation;
+import "shared.proto";
+
+message Vec2Float { double x = 1; double y = 2; }
+message Vec2Int   { int32  x = 1; int32  y = 2; }
+
+message VideoAnnotationEnv { string env = 1; string env_subtype = 2; string env_version = 3; }
+message WindowSpecs { int32 width = 1; int32 height = 2; double scale = 3; int32 dpi = 4; string title = 5; int64 screen_id = 6; }
+message ScreenSpecs { int32 width = 1; int32 height = 2; double scale = 3; int32 dpi = 4; int64 id = 5; }
+message CaptureDeviceSpecs { int32 recap_version = 6; string git_commit = 7; string os = 1; string keyboard_layout = 2; WindowSpecs window_specs = 3; repeated ScreenSpecs screen_specs = 4; }
+message VideoAspectRatio { int32 numerator = 1; int32 denominator = 2; }
+message VideoQualityInfo { bool has_facecam = 1; VideoAspectRatio aspect_ratio = 2; }
+message YoutubeSource { string video_id = 1; string query = 2; }
+message TwitchSource  { string video_id = 1; string game = 2; string env_subtype = 3; }
+message OAISource     { string video_url = 1; string action_url = 2; }
+message Source {
+  oneof source_type {
+    YoutubeSource youtube_source = 1;
+    OAISource     oai_source     = 2;
+    TwitchSource  twitch_source  = 3;
+  }
+}
+message VideoSourceInfo { Source source = 1; string video_filter_info = 2; }
+message VideoAnnotationMetadata {
+  string id = 1; int64 timestamp = 2; string user = 3;
+  repeated string tasks = 4; float frames_per_second = 5;
+  VideoAnnotationEnv env = 6; string group_name = 7;
+  string golden_example_path = 8; VideoSourceInfo video_source_info = 9;
+  CaptureDeviceSpecs capture_device_specs = 10; VideoQualityInfo video_quality_info = 11;
+}
+
+message DeprecatedMouseAction { double x=1; double y=2; double dx=3; double dy=4; repeated int32 buttons=5; repeated int32 new_buttons=6; }
+message MouseAction {
+  elefant.training_data.shared.Vec2Int mouse_absolute_px = 1;
+  elefant.training_data.shared.Vec2Float mouse_relative  = 2;
+  elefant.training_data.shared.Vec2Int mouse_delta_px    = 3;
+  elefant.training_data.shared.Vec2Int scroll_delta_px   = 4;
+  repeated string buttons_down = 9;
+}
+message KeyboardAction { repeated string keys = 1; }
+message GamePadButtons { bool south=1; bool north=2; bool east=3; bool west=4; bool dpad_up=5; bool dpad_down=6; bool dpad_left=7; bool dpad_right=8; bool start=9; bool select=10; bool left_bumper=11; bool right_bumper=12; }
+message Stick { float x=1; float y=2; bool pressed=3; }
+message GamePadAction { GamePadButtons buttons=1; Stick left_stick=2; Stick right_stick=3; float left_trigger=4; float right_trigger=5; }
+message LowLevelAction { DeprecatedMouseAction mouse_deprecated=1; KeyboardAction keyboard=2; bool is_known=3; MouseAction mouse=4; GamePadAction game_pad=5; }
+
+message MinecraftState       { double xpos=1; double ypos=2; double zpos=3; double yaw=4; double pitch=5; int64 milli=6; int64 serverTick=7; }
+message TwoDBlockChaseState  { int32 agent_pos_x=1; int32 agent_pos_y=2; int32 goal_pos_x=3; int32 goal_pos_y=4; }
+message MiniWorldAgentState  { double agent_pos_x=1; double agent_pos_z=2; double agent_dir_x=5; double agent_dir_z=6; double camera_dir_x=7; double camera_dir_z=8; int64 health=9; double reward=10; }
+message MiniWorldEnvState    { double goal_pos_x=1; double goal_pos_z=2; }
+message MiniWorldState       { MiniWorldAgentState miniworld_agent_state=1; repeated MiniWorldEnvState miniworld_env_state=2; }
+
+message MouseButtonEvent   { string button=1; bool pressed=2; }
+message KeyboardEvent      { string key=1;    bool pressed=2; }
+message GamePadButtonEvent { string button=1; bool pressed=2; }
+message GamePadAxisEvent   { string axis=1;   float value=2;  }
+message GamePadTriggerEvent{ string trigger=1;float value=2;  }
+message InputEvent {
+  oneof event {
+    MouseButtonEvent   mouse_event          = 1;
+    KeyboardEvent      keyboard_event       = 2;
+    elefant.training_data.shared.Vec2Int mouse_move_event  = 3;
+    elefant.training_data.shared.Vec2Int wheel_event       = 4;
+    elefant.training_data.shared.Vec2Int mouse_delta_event = 5;
+    GamePadButtonEvent game_pad_button_event  = 7;
+    GamePadAxisEvent   game_pad_axis_event    = 8;
+    GamePadTriggerEvent game_pad_trigger_event= 9;
+  }
+  uint64 time = 6;
+  bool simulated = 10;
+}
+
+message FloatTensor           { repeated int64 shape=1; repeated float values=2; }
+message TokenizerEmbeddingMap { map<string, FloatTensor> text_embeddings=1; }
+message FrameTextAnnotator    { string provider=1; string version=2; }
+message FrameTextAnnotation   { string instruction=1; FrameTextAnnotator frame_text_annotator=2; float duration=3; map<string, TokenizerEmbeddingMap> text_embedding_dict=4; }
+message ActionTask            { string lower_level_task=1; string higher_level_task=2; }
+
+message FrameAnnotation {
+  LowLevelAction user_action   = 1;
+  LowLevelAction system_action = 6;
+  oneof env_state {
+    MinecraftState      minecraft_state  = 2;
+    TwoDBlockChaseState block_chase_state= 3;
+    MiniWorldState      miniworld_state  = 4;
+  }
+  ActionTask action_task = 5;
+  repeated FrameTextAnnotation frame_text_annotation = 7;
+  uint64 frame_time  = 8;
+  repeated InputEvent input_events = 9;
+}
+
+message Changelog    { string change_id=1; string change_description=2; int64 timestamp=3; }
+message VoiceEvent   { uint64 time=1; bool speaking=2; }
+message Point3D      { double x=1; double y=2; double z=3; }
+message PathfindingTaskSpecificInfo { repeated Point3D pathfinding_trajectory=1; }
+message TaskSpecificInfo { oneof task_info { PathfindingTaskSpecificInfo pathfinding_info=1; } }
+message VideoAspectRatio2 { int32 numerator=1; int32 denominator=2; }
+message VideoFrameAnnotationMetadata { string video_narrative=1; }
+message VideoGlobalTask              { string video_narrative=1; }
+
+message VideoAnnotation {
+  VideoAnnotationMetadata          metadata                       = 2;
+  repeated FrameAnnotation         frame_annotations              = 3;
+  TaskSpecificInfo                 task_specific_info             = 4;
+  VideoGlobalTask                  video_global_task              = 5;
+  VideoFrameAnnotationMetadata     video_frame_annotation_metadata= 7;
+  int32                            version                        = 6;
+  repeated Changelog               changelog                      = 8;
+  repeated VoiceEvent              voice_events                   = 9;
+}

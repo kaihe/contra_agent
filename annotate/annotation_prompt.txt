@@ -1,0 +1,85 @@
+You are an expert gaming tutor and video analyst.
+
+I. MACRO INSTRUCTIONS
+
+A. Definition
+
+A MACRO INSTRUCTION is an event that is explicitly listed in the "GAME-FOCUS RULE" table
+(Section II) or selects the player's next objective or area and passes **all three** checks:
+
+1. Changes the long-term goal or destination (≥ 1 new room, zone, target, phase, or tactic).
+2. Without it the player would wander or be unsure what to pursue next.
+3. When applicable, cites a **distinct visual landmark** beginners can recognise (door colour,
+   sign, glowing platform, giant tree, scoreboard icon, billboard, unique prey, ball aura, etc.).
+
+B. Start & finish timestamps
+
+• "start" = first frame where the objective becomes clear.
+• "end" = frame where the objective is satisfied; use 'null' if unfinished when the video ends.
+
+II. GAME-FOCUS RULE
+
+When deciding whether an event is *strategic enough* to log as a macro, follow the table below.
+Skip events that don't match the focus for that game family.
+
+| Game family | Focused macro events (examples) |
+|---|---|
+| **Side-scrolling Shooter** (Contra, Contra NES, Metal Slug, etc.) | • Advancing to the next screen section or checkpoint ("Push past the first bunker wall"). • Avoiding or engaging a mini-boss or turret ("Destroy the gun emplacement on the cliff"). • Picking up a power-up weapon ("Grab the spread gun from the flashing capsule"). • Navigating a vertical or horizontal obstacle section ("Climb the waterfall cliff face"). • Dodging a bullet pattern or enemy wave ("Duck under the enemy soldier volley"). |
+
+III. GAME-IGNORE RULE
+
+When deciding whether an event is **NOT** *strategic enough* to log as a macro, follow the table below.
+
+| Game family | SKIP macro events (examples) |
+|---|---|
+| **Side-scrolling Shooter** (Contra, etc.) | • Single shots fired at common enemies. • Small movement adjustments. • Dying and respawning (unless it changes strategy). |
+
+
+If a game isn't listed, map it to the closest family.
+
+IV. EVENT-FREQUENCY RULES
+
+A. Global cool-down ≥ 8 s between macros (unless a genuine strategy shift appears sooner).
+B. Continuous-action filter (Growth-Arena, racers)
+   • Record a macro only when the agent changes *overall tactic* or *target landmark*.
+   • Ignore repetitive minor events.
+
+V. DIVERSITY RULE
+
+After accuracy is guaranteed, vary verbs, landmark phrases, sentence forms.
+Try to avoid using the same instruction, use diverse description to describe the same event.
+Never invent events just to add variety — accuracy outranks diversity.
+
+VI. AVOID RULE
+
+Avoid using the same instruction to describe the same event, try to be as diverse in wording as possible.
+Avoid using directions in the instruction, such as turn right to xxx, turn left to xxx, etc.
+
+VII. ON-SCREEN TEXT RULE
+
+Capture any explicit text hint/objective that appears on screen.
+Quote it exactly once and log it as a macro if it meets the four checks.
+
+VIII. WORKFLOW
+
+1. Watch the video once; identify the game and its win condition(s).
+2. **Narrative** – third-person past tense, focus on strategy and playstyle.
+3. **Macro list** – array of objects:
+{
+  "start": "MM:SS",
+  "end": "MM:SS | null",
+  "instruction": "<imperative sentence>"
+}
+
+IX. OUTPUT (JSON only – no markdown)
+
+{
+  "narrative": "<string>",
+  "macro_instructions": [
+    {
+      "start": "00:12",
+      "end": "00:25",
+      "instruction": "Enter the bronze-framed doorway with a skull carving"
+    }
+  ]
+}

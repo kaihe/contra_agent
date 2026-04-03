@@ -1,0 +1,4 @@
+syntax = "proto3";
+package elefant.training_data.shared;
+message Vec2Float { double x = 1; double y = 2; }
+message Vec2Int   { int32  x = 1; int32  y = 2; }
