@@ -117,13 +117,13 @@ def replay_actions(source, *,
 
     env = retro.make(
         game=GAME,
-        state=level_str,
+        state=retro.State.NONE,  # actual state comes from initial_emu_state below
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
-    obs, _ = env.reset()
+    env.reset()
     rewind_state(env, initial_emu_state)
 
     if want_video:

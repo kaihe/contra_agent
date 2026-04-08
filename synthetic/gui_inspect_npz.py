@@ -54,13 +54,26 @@ def load_frames(fpath: str) -> tuple[list[np.ndarray], list[np.ndarray], list[fl
         m = re.search(r'[Ll]evel(\d+)', os.path.basename(fpath))
         start_level = int(m.group(1)) - 1 if m else 0
 
+    level_num = start_level + 1
+    # Level1.state lives in the root integration folder;
+    # Level2-8.state have been moved to the spread_gun_state/ subdirectory.
+    if level_num == 1:
+        state_arg = "Level1"
+    else:
+        state_arg = retro.State.NONE  # load manually below
+
     env = retro.make(
-        game=GAME, state=f"Level{start_level + 1}",
+        game=GAME, state=state_arg,
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
+
+    if level_num > 1:
+        env.load_state(f"spread_gun_state/Level{level_num}",
+                       retro.data.Integrations.CUSTOM_ONLY)
+
     if "initial_state" in list(d.keys()):
         env.initial_state = bytes(d["initial_state"])
     obs, _ = env.reset()

@@ -23,7 +23,7 @@ while true; do
     echo "  Run #${RUN}   level: ${LEVEL}"
     echo "────────────────────────────────────────"
 
-    conda run --no-capture-output -n vllm-env python "${SCRIPT_DIR}/mc_search.py" \
+    python "${SCRIPT_DIR}/mc_search.py" \
         --level ${LEVEL} \
         --goal  level_up
 done

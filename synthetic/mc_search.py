@@ -70,18 +70,21 @@ def _get_prior(level: int) -> np.ndarray:
 
 _worker_env = None
 
-def _worker_init(game: str, state_label: str) -> None:
+def _worker_init(game: str, state_label: str, use_spread: bool) -> None:
     global _worker_env
     import warnings
     warnings.filterwarnings("ignore", message=".*Gym.*")
     np.random.seed(os.getpid() % (2 ** 32))
     _worker_env = retro.make(
-        game=game, state=state_label,
+        game=game, state=retro.State.NONE if use_spread else state_label,
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
+    if use_spread:
+        _worker_env.load_state(f"spread_gun_state/{state_label}",
+                               retro.data.Integrations.CUSTOM_ONLY)
     _worker_env.reset()
 
 
@@ -338,21 +341,21 @@ def main():
 
     state_label = DEFAULT_STATE_BY_LEVEL[args.level]
 
+    use_spread = args.level > 1
     pool = mp.Pool(args.workers, initializer=_worker_init,
-                   initargs=(GAME, state_label)) if args.workers > 1 else None
+                   initargs=(GAME, state_label, use_spread)) if args.workers > 1 else None
 
     env = retro.make(
-        game=GAME, state=state_label,
+        game=GAME, state=retro.State.NONE if use_spread else state_label,
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
-    spread_path = os.path.join(STATE_DIR, f"{state_label}.state")
-    if args.level > 1 and os.path.exists(spread_path):
-        with open(spread_path, "rb") as f:
-            env.initial_state = f.read()
-        print(f"  Spread state: {spread_path}")
+    if use_spread:
+        env.load_state(f"spread_gun_state/{state_label}",
+                       retro.data.Integrations.CUSTOM_ONLY)
+        print(f"  Spread state: spread_gun_state/{state_label}.state")
     env.reset()
     initial_state_for_npz = env.em.get_state()
     initial_emu_state      = env.em.get_state()
