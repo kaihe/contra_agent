@@ -1,0 +1,19 @@
+==========================================
+  MC Search Loop
+  Goal:            level_up  (LEVEL=1)
+  Target wins:     10
+  Budget per run:  3000s
+  Winning traces → /home/kaihe/code/contra_agent/synthetic/mc_trace
+==========================================
+
+────────────────────────────────────────
+  Run #1   wins: 0/10
+────────────────────────────────────────
+Loaded action bigram prior for Level1
+Loaded action bigram prior for Level2
+Loaded action bigram prior for Level3
+Loaded action bigram prior for Level4
+Loaded action bigram prior for Level5
+Loaded action bigram prior for Level6
+Loaded action bigram prior for Level7
+Loaded action bigram prior for Level8

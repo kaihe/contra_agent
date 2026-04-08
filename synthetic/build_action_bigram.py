@@ -5,25 +5,39 @@ import numpy as np
 
 from contra.inputs import NUM_DPAD, NUM_BUTTONS, DPAD_NAMES, BUTTON_NAMES
 
-NUM_ACTIONS = NUM_DPAD * NUM_BUTTONS  # 7 * 4 = 28
+NUM_ACTIONS = NUM_DPAD * NUM_BUTTONS  # 9 * 4 = 36
 
 
 def nes_to_action_idx(nes: np.ndarray) -> int:
-    """Convert a 9-button NES action vector to a flat action index."""
+    """Convert a 9-button NES action vector to a flat action index.
+
+    DPAD mapping (matches DPAD_TABLE in inputs.py):
+      0: none
+      1: Left
+      2: Right
+      3: Up
+      4: Down
+      5: Up+Left
+      6: Up+Right
+      7: Down+Left
+      8: Down+Right
+    """
     up, down, left, right = bool(nes[4]), bool(nes[5]), bool(nes[6]), bool(nes[7])
     fire, jump = bool(nes[0]), bool(nes[8])
 
-    if right and up:    dpad = 5
-    elif right and down: dpad = 6
-    elif right:         dpad = 1
-    elif left:          dpad = 2
-    elif up:            dpad = 3
-    elif down:          dpad = 4
-    else:               dpad = 0
+    if up and left:       dpad = 5
+    elif up and right:    dpad = 6
+    elif down and left:   dpad = 7
+    elif down and right:  dpad = 8
+    elif left:            dpad = 1
+    elif right:           dpad = 2
+    elif up:              dpad = 3
+    elif down:            dpad = 4
+    else:                 dpad = 0
 
     if fire and jump:  btn = 3
-    elif fire:         btn = 1
-    elif jump:         btn = 2
+    elif jump:         btn = 1
+    elif fire:         btn = 2
     else:              btn = 0
 
     return dpad * NUM_BUTTONS + btn

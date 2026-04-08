@@ -1,0 +1,13 @@
+┏━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃   ┃ Name  ┃ Type            ┃ Params ┃ Mode  ┃ FLOPs ┃
+┡━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│ 0 │ model │ OptimizedModule │  183 M │ train │     0 │
+└───┴───────┴─────────────────┴────────┴───────┴───────┘
+Trainable params: 182 M                                                                                                                                                                                                                   
+Non-trainable params: 851 K                                                                                                                                                                                                               
+Total params: 183 M                                                                                                                                                                                                                       
+Total estimated model params size (MB): 732                                                                                                                                                                                               
+Modules in train mode: 165                                                                                                                                                                                                                
+Modules in eval mode: 226                                                                                                                                                                                                                 
+Total FLOPs: 0                                                                                                                                                                                                                            
+Epoch 1/-2 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   153/160 0:01:20 • 0:00:02 3.52it/s v_num: 5.000 train/loss: 0.650

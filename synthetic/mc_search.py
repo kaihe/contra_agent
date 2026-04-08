@@ -29,7 +29,7 @@ warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 
 import numpy as np
 import stable_retro as retro
-from contra.run_npz import replay_npz, rewind_state, step_env
+from contra.replay import rewind_state, step_env
 from contra.inputs import DPAD_TABLE, BUTTON_TABLE, NUM_DPAD, NUM_BUTTONS
 from contra.events import compute_reward, scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR
 
@@ -100,8 +100,12 @@ def _load_bigram(start_level: int) -> None:
     for level in range(start_level, 9):
         key = f"Level{level}"
         if key in data:
-            _ACTION_PRIORS[level] = data[key]
-            print(f"Loaded action bigram prior for {key}")
+            prior = data[key]
+            if prior.shape == (NUM_ACTIONS, NUM_ACTIONS):
+                _ACTION_PRIORS[level] = prior
+                print(f"Loaded action bigram prior for {key}")
+            else:
+                print(f"WARNING: bigram shape {prior.shape} != ({NUM_ACTIONS},{NUM_ACTIONS}) for {key}, using uniform.")
         else:
             print(f"WARNING: key '{key}' not in {path}, using uniform for level {level}.")
 

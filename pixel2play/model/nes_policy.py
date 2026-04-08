@@ -69,8 +69,10 @@ class NESPolicyModel(nn.Module):
         button_logits: torch.Tensor,  # (B, T, N_BUTTONS)
         dpad_labels: torch.Tensor,    # (B, T)
         button_labels: torch.Tensor,  # (B, T)
+        valid_mask: torch.Tensor,     # (B, T) bool -- False for padding steps
     ) -> torch.Tensor:
-        dpad_ce   = F.cross_entropy(dpad_logits.flatten(0, 1),   dpad_labels.flatten())
-        button_ce = F.cross_entropy(button_logits.flatten(0, 1), button_labels.flatten())
+        mask = valid_mask.flatten()   # (B*T,)
+        dpad_ce   = F.cross_entropy(dpad_logits.flatten(0, 1),   dpad_labels.flatten(),   reduction="none")[mask].mean()
+        button_ce = F.cross_entropy(button_logits.flatten(0, 1), button_labels.flatten(), reduction="none")[mask].mean()
         # Normalise by max entropy so both terms are in [0, 1]
         return dpad_ce / math.log(N_DPAD) + button_ce / math.log(N_BUTTONS)

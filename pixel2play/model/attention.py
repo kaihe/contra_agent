@@ -99,16 +99,17 @@ class SwiGLUFFN(nn.Module):
 # ---------------------------------------------------------------------------
 
 class TransformerLayer(nn.Module):
-    def __init__(self, dim: int, attn: SelfAttention, ffn: SwiGLUFFN):
+    def __init__(self, dim: int, attn: SelfAttention, ffn: SwiGLUFFN, dropout: float = 0.0):
         super().__init__()
         self.attn = attn
         self.ffn = ffn
         self.attn_norm = RMSNorm(dim)
         self.ffn_norm = RMSNorm(dim)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, input_pos: Optional[torch.Tensor] = None) -> torch.Tensor:
-        x = x + self.attn(self.attn_norm(x), input_pos)
-        x = x + self.ffn(self.ffn_norm(x))
+        x = x + self.dropout(self.attn(self.attn_norm(x), input_pos))
+        x = x + self.dropout(self.ffn(self.ffn_norm(x)))
         return x
 
 
@@ -125,6 +126,7 @@ class Transformer(nn.Module):
         n_kv_heads: int,
         max_seq_len: int,
         is_causal: bool = False,
+        dropout: float = 0.0,
     ):
         super().__init__()
         head_dim = dim // n_q_heads
@@ -134,6 +136,7 @@ class Transformer(nn.Module):
                 dim=dim,
                 attn=SelfAttention(dim, n_q_heads, n_kv_heads, rope, is_causal),
                 ffn=SwiGLUFFN(dim),
+                dropout=dropout,
             )
             for _ in range(n_layers)
         ])

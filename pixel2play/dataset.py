@@ -1,161 +1,119 @@
 """
-NES dataset: loads recordings from bc_data and returns fixed-length chunks.
+NES dataset: loads bc_features.npz recordings and returns fixed-length chunks.
 
-Each recording directory contains:
-  192x192.mp4       – raw gameplay video (20 fps, uint8)
-  annotation.proto  – per-frame action labels + optional text embeddings
+Each recording contains bc_features.npz with:
+  img_features : float16  (N+1, 1, embed_dim)   precomputed frame tokens
+  dpad         : int8     (N,)                   dpad class 0..8
+  button       : int8     (N,)                   button class 0..3
+  text         : float16  (N, 1, 768)            Gemma embedding (zeros if absent)
 
-A chunk of T consecutive frames yields:
-  frames  : (T, 3, 192, 192)  float32, ImageNet-normalised
-  dpad    : (T,)               int64, 0..8
-  button  : (T,)               int64, 0..3
-  text    : (T, 1, 768)        float32, Gemma embedding (zeros if absent)
+Chunks are non-overlapping with stride=T. The final tail chunk is padded with
+the last frame/action repeated, and a valid_mask marks the real frames.
+
+A chunk of T consecutive steps yields:
+  img        : (T, 1, embed_dim)  float32
+  dpad       : (T,)               int64,  0..8
+  button     : (T,)               int64,  0..3
+  text       : (T, 1, 768)        float32
+  valid_mask : (T,)               bool    -- False for padding steps
 """
 
 import os
-import sys
 from typing import List
 
-import av
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-# annotate lives one level up from pixel2play/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from annotate.proto.video_annotation_pb2 import VideoAnnotation  # noqa: E402
-
-from pixel2play.model.nes_actions import encode  # noqa: E402
-
-_TEXT_MODEL  = "gemini-3-flash-preview"
-_TEXT_KEY    = "gemma"
-_TEXT_DIM    = 768
-
-# ImageNet normalisation (EfficientNet backbone expects this)
-_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-_STD  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-
 
 class Recording:
-    """Lazy-loading wrapper for one recording directory."""
+    """Memory-mapped wrapper for one bc_features.npz recording."""
 
-    def __init__(self, rec_dir: str):
-        self.rec_dir = rec_dir
-        self._meta_loaded = False
-        _feat_path = os.path.join(rec_dir, "img_features.npy")
-        self._img_features = np.load(_feat_path, mmap_mode="r") if os.path.isfile(_feat_path) else None
+    def __init__(self, features_path: str, n_text_tokens: int = 1):
+        self.path = features_path
+        data = np.load(features_path, mmap_mode="r")
+        self._img    = data["img_features"]                                  # (N+1, 1, D) float16
+        self._dpad   = torch.from_numpy(data["dpad"].astype(np.int64))      # (N,)
+        self._button = torch.from_numpy(data["button"].astype(np.int64))    # (N,)
+        self._n      = len(self._dpad)
 
-    def _load_meta(self):
-        """Load only the annotation proto (cheap). Populates n, dpad, button, text."""
-        if self._meta_loaded:
-            return
+        if "text" in data and n_text_tokens > 0:
+            self._text = torch.from_numpy(data["text"].astype(np.float32))[:, :n_text_tokens, :]
+        else:
+            self._text = torch.zeros(self._n, n_text_tokens, 768)
 
-        va = VideoAnnotation()
-        with open(os.path.join(self.rec_dir, "annotation.proto"), "rb") as f:
-            va.ParseFromString(f.read())
-
-        fps = va.metadata.frames_per_second or 20.0
-        fas = va.frame_annotations[1:]   # index 0 is blank initial state
-        n = len(fas)
-
-        dpad   = np.empty(n, dtype=np.int64)
-        button = np.empty(n, dtype=np.int64)
-        text   = np.zeros((n, 1, _TEXT_DIM), dtype=np.float32)
-
-        for i, fa in enumerate(fas):
-            keys = list(fa.user_action.keyboard.keys)
-            dpad[i], button[i] = encode(keys)
-
-            if fa.frame_text_annotation:
-                fta = fa.frame_text_annotation[0]
-                gem = fta.text_embedding_dict.get(_TEXT_MODEL, None)
-                if gem is not None:
-                    emb = gem.text_embeddings.get(_TEXT_KEY, None)
-                    if emb is not None and emb.values:
-                        vec = np.array(emb.values, dtype=np.float32).reshape(list(emb.shape))
-                        span = round(fta.duration * fps)
-                        text[i:i + span] = vec
-
-        self._n      = n
-        self._dpad   = torch.from_numpy(dpad)
-        self._button = torch.from_numpy(button)
-        self._text   = torch.from_numpy(text)
-        self._meta_loaded = True
-
-    def __len__(self):
-        self._load_meta()
+    def __len__(self) -> int:
         return self._n
 
     def get_chunk(self, start: int, length: int):
-        """Return a chunk of frames (or precomputed features) with actions."""
-        self._load_meta()
-        end = start + length
+        valid_len = min(length, self._n - start)
 
-        if self._img_features is not None:
-            # Fast path: load precomputed EfficientNet tokens from .npy
-            img = torch.from_numpy(
-                np.array(self._img_features[start:end], dtype=np.float32)
-            )  # (T, n_tokens, D)
-        else:
-            # Slow path: seek + decode video frames on demand
-            raw_frames = []
-            with av.open(os.path.join(self.rec_dir, "192x192.mp4")) as container:
-                stream = container.streams.video[0]
-                fps = float(stream.average_rate)
+        img    = torch.from_numpy(self._img[start:start + valid_len].astype(np.float32))
+        dpad   = self._dpad[start:start + valid_len]
+        button = self._button[start:start + valid_len]
+        text   = self._text[start:start + valid_len]
 
-                if start > 0:
-                    target_ts = int(start / fps / float(stream.time_base))
-                    container.seek(target_ts, stream=stream, backward=True)
+        valid_mask = torch.zeros(length, dtype=torch.bool)
+        valid_mask[:valid_len] = True
 
-                for frame in container.decode(video=0):
-                    current = round(float(frame.pts * stream.time_base) * fps)
-                    if current < start:
-                        continue
-                    if current >= end:
-                        break
-                    raw_frames.append(frame.to_ndarray(format="rgb24"))
-                    if len(raw_frames) >= length:
-                        break
+        if valid_len < length:
+            pad = length - valid_len
+            img    = torch.cat([img,    img[-1:].expand(pad, -1, -1)],              dim=0)
+            dpad   = torch.cat([dpad,   torch.zeros(pad, dtype=dpad.dtype)],        dim=0)
+            button = torch.cat([button, torch.zeros(pad, dtype=button.dtype)],      dim=0)
+            text   = torch.cat([text,   text[-1:].expand(pad, -1, -1)],             dim=0)
 
-            img = torch.from_numpy(np.stack(raw_frames)).permute(0, 3, 1, 2).float() / 255.0
-            img = (img - _MEAN) / _STD  # (T, 3, H, W)
-
-        return (
-            img,                        # (T, n_tokens, D) or (T, 3, H, W)
-            self._dpad[start:end],      # (T,)
-            self._button[start:end],    # (T,)
-            self._text[start:end],      # (T, 1, 768)
-        )
+        return img, dpad, button, text, valid_mask
 
 
 class NESDataset(Dataset):
-    def __init__(self, data_root: str, n_steps: int = 200, stride: int = 1):
+    def __init__(self, data_root: str, n_steps: int = 200, n_text_tokens: int = 1):
         """
         Args:
-            data_root: directory containing recording sub-directories.
-            n_steps:   sequence length T.
-            stride:    step between consecutive chunks.
+            data_root:     directory containing .npz recordings.
+            n_steps:       chunk length T.
+            n_text_tokens: number of text tokens to keep per step.
         """
         self.n_steps = n_steps
 
-        rec_dirs = sorted([
-            os.path.join(data_root, d)
-            for d in os.listdir(data_root)
-            if os.path.isfile(os.path.join(data_root, d, "annotation.proto"))
+        npz_files = sorted([
+            os.path.join(data_root, f)
+            for f in os.listdir(data_root)
+            if f.endswith(".npz")
         ])
-        if not rec_dirs:
-            raise FileNotFoundError(f"No recordings found in {data_root!r}")
+        if not npz_files:
+            raise FileNotFoundError(f"No .npz recordings found in {data_root!r}")
 
-        self.recordings: List[Recording] = [Recording(d) for d in rec_dirs]
+        self.recordings: List[Recording] = [Recording(p, n_text_tokens=n_text_tokens) for p in npz_files]
+        self._build_index(rng=None)
 
-        # Build a flat index: list of (recording_idx, chunk_start)
-        self._index: List[tuple] = []
+    @classmethod
+    def from_recordings(cls, recordings: List[Recording], n_steps: int) -> "NESDataset":
+        """Construct a dataset from an existing list of Recording objects (no file I/O)."""
+        obj = object.__new__(cls)
+        obj.n_steps = n_steps
+        obj.recordings = recordings
+        obj._build_index(rng=None)
+        return obj
+
+    def _build_index(self, rng: np.random.RandomState = None):
+        """Build chunk index. If rng is provided, each recording gets a random
+        start offset in [0, min(T-1, len-1)] before striding by T."""
+        self._index = []
         for rec_idx, rec in enumerate(self.recordings):
-            n = len(rec)
-            for start in range(0, n - n_steps + 1, stride):
+            if rng is not None:
+                cap = min(self.n_steps - 1, len(rec) - 1)
+                offset = int(rng.randint(0, cap + 1))
+            else:
+                offset = 0
+            for start in range(offset, len(rec), self.n_steps):
                 self._index.append((rec_idx, start))
 
-    def __len__(self):
+    def resample(self, rng: np.random.RandomState):
+        """Rebuild chunk boundaries with a new random jitter. Call at epoch start."""
+        self._build_index(rng=rng)
+
+    def __len__(self) -> int:
         return len(self._index)
 
     def __getitem__(self, idx):

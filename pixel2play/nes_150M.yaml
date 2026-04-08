@@ -5,7 +5,7 @@ shared:
   frame_width: 192
   text_tokenizer_config:
     text_tokenizer_name: "gemma"
-    text_embedding_shape: [1, 768]
+    text_embedding_shape: [0, 768]
     text_annotation_model_version: ["gemini-3-flash-preview"]
   tokenizer:
     type: "conv"
@@ -23,6 +23,7 @@ policy_model:
   attention_history_len: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
   n_kv_sink_tokens: 0
   model_type: "dense"
+  dropout: 0.5
   action_decoder:
     embed_dim: *transformer_dim
 
@@ -38,10 +39,10 @@ stage3_finetune:
     beta_1: 0.9
     beta_2: 0.999
 
-  validation_step_interval: 2_000_000
-  n_validation_steps: 20000
-  save_every_n_steps: 20000
-  n_training_steps: 200_000
+  validation_step_interval: 500
+  n_validation_steps: 1_000
+  save_every_n_steps: 2_000
+  n_training_steps: 5_000
   accumulate_grad_batches: 1
 
   training_dataset:

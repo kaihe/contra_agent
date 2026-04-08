@@ -52,6 +52,8 @@ class BackboneConfig:
     mask_block_size: int = 128
     # Attention history per layer (length must equal n_layers)
     attention_history_len: List[int] = None
+    # Dropout
+    dropout: float = 0.1
     # Action decoder
     dec_n_layers: int = 3
     dec_n_heads: int = 8
@@ -147,6 +149,7 @@ class PolicyCausalTransformer(nn.Module):
             n_q_heads=cfg.n_q_heads,
             n_kv_heads=cfg.n_kv_heads,
             max_seq_len=self.max_seq_len,
+            dropout=cfg.dropout,
         )
 
         # Action decoder (small causal transformer)
@@ -259,13 +262,14 @@ class PolicyCausalTransformer(nn.Module):
 
         # Text tokens: project and impute "no text" for zero embeddings
         text = self.text_proj(text_tokens_embed)           # (B, T, n_text, D)
-        is_zero = ~text.reshape(B * T, -1).any(dim=-1)    # (BT,)
-        text_bt = text.reshape(B * T, self.cfg.n_text_tokens, -1)
-        text = torch.where(
-            is_zero.view(B * T, 1, 1),
-            self.no_text_embed,
-            text_bt,
-        ).reshape(B, T, self.cfg.n_text_tokens, text.size(-1))
+        if self.cfg.n_text_tokens > 0:
+            is_zero = ~text.reshape(B * T, -1).any(dim=-1)    # (BT,)
+            text_bt = text.reshape(B * T, self.cfg.n_text_tokens, -1)
+            text = torch.where(
+                is_zero.view(B * T, 1, 1),
+                self.no_text_embed,
+                text_bt,
+            ).reshape(B, T, self.cfg.n_text_tokens, text.size(-1))
 
         # Build flat sequence and run transformer
         x = self._build_sequence(img_tokens, text, action_embeddings_in)   # (B, max_seq_len, D)
