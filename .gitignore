@@ -38,3 +38,4 @@ contra.egg-info/
 
 # External reference repo
 reference/
+.venv/
