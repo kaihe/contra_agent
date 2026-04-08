@@ -37,7 +37,7 @@ from pixel2play.train import NESLightningModule
 import yaml
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "nes_150M.yaml")
-STATE_DIR   = "contra/start_states"
+STATE_DIR   = "contra/integration/Contra-Nes"
 
 # NES button order: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 # Matches DPAD_ENCODING and BUTTON_ENCODING in nes_actions.py
@@ -82,7 +82,7 @@ def _load_initial_state(level: int) -> bytes:
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     spread = os.path.join(STATE_DIR, f"{level_label}.state")
     if level > 1 and os.path.exists(spread):
@@ -118,7 +118,7 @@ def play(
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     env.reset()
     rewind_state(env, initial_state)

@@ -14,6 +14,7 @@ import os
 import warnings
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 
+import contra  # registers custom ROM integration
 import gymnasium as gym
 import numpy as np
 import torch as th
@@ -243,7 +244,7 @@ def make_env(game, states, seed=0, random_start_frames=0):
             use_restricted_actions=retro.Actions.FILTERED,
             obs_type=retro.Observations.IMAGE,
             render_mode=None,
-            inttype=retro.data.Integrations.ALL,
+            inttype=retro.data.Integrations.CUSTOM_ONLY,
         )
         env = create_env(env, random_start_frames=random_start_frames, level=level)
         env = Monitor(env)

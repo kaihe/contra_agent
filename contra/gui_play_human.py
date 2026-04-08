@@ -25,6 +25,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+import contra  # registers custom ROM integration
 import numpy as np
 import pygame
 import stable_retro as retro
@@ -120,7 +121,7 @@ def make_env(level: str) -> tuple[retro.RetroEnv, np.ndarray, bytes]:
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     obs, _ = env.reset()
 

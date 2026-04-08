@@ -121,7 +121,7 @@ def replay_actions(source, *,
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     obs, _ = env.reset()
     rewind_state(env, initial_emu_state)

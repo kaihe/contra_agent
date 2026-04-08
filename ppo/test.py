@@ -14,6 +14,7 @@ import os
 import warnings
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 
+import contra  # registers custom ROM integration
 import numpy as np
 import stable_retro as retro
 from stable_baselines3 import PPO
@@ -93,7 +94,7 @@ def main():
         use_restricted_actions=retro.Actions.FILTERED,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     env = create_env(base_env, monitor=monitor)
 

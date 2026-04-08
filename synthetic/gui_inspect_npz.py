@@ -59,7 +59,7 @@ def load_frames(fpath: str) -> tuple[list[np.ndarray], list[np.ndarray], list[fl
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     if "initial_state" in list(d.keys()):
         env.initial_state = bytes(d["initial_state"])

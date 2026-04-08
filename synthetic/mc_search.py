@@ -38,7 +38,7 @@ _game_clear_ev = EV_GAME_CLEAR
 
 GAME = "Contra-Nes"
 DEFAULT_STATE_BY_LEVEL = {i: f"Level{i}" for i in range(1, 9)}
-STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'contra', 'start_states')
+STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'contra', 'integration', 'Contra-Nes')
 SKIP = 3
 TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
 VIDEO_DIR = os.path.join("tmp", "replay_videos")
@@ -80,7 +80,7 @@ def _worker_init(game: str, state_label: str) -> None:
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     _worker_env.reset()
 
@@ -346,7 +346,7 @@ def main():
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     spread_path = os.path.join(STATE_DIR, f"{state_label}.state")
     if args.level > 1 and os.path.exists(spread_path):

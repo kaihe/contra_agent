@@ -54,7 +54,7 @@ _BUTTON_NES = np.array([
 ], dtype=np.uint8)
 
 GAME      = "Contra-Nes"
-STATE_DIR = "contra/start_states"
+STATE_DIR = "contra/integration/Contra-Nes"
 DATA_ROOT = "annotate/bc_data/Contra-Nes"
 
 
@@ -70,7 +70,7 @@ def _load_initial_state(level: int) -> bytes:
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
-        inttype=retro.data.Integrations.ALL,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     spread = os.path.join(STATE_DIR, f"{state_label}.state")
     if level > 1 and os.path.exists(spread):
