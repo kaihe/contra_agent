@@ -1,290 +1,280 @@
 """
-pixel2play agent play — run the trained policy live in the emulator.
+play.py — Generate an action sequence using a trained NESPolicyModel checkpoint.
 
-The agent plays until it loses a life (or the level is cleared / game is won).
-The action sequence is saved to a .npz file and replayed to confirm the outcome
-and optionally render a video.
+The model observes a growing context window:
+  steps 0..199  → context grows from 1 to 200 (prediction at the last real position)
+  steps 200+    → sliding window of the last 200 frames
+
+The output is an NPZ file compatible with contra.replay.replay_actions:
+
+    python contra/replay.py out.npz --video out.mp4
 
 Usage:
-    python pixel2play/play.py --checkpoint tmp/checkpoints/nes_policy/ckpt-00001000.ckpt
-    python pixel2play/play.py --checkpoint <ckpt> --level 2 --video out/play.mp4
-    python pixel2play/play.py --checkpoint <ckpt> --max-steps 3000
+    python pixel2play/play.py --checkpoint tmp/checkpoints/nes_policy/last.ckpt
+    python pixel2play/play.py --checkpoint tmp/checkpoints/nes_policy/last.ckpt \\
+        --level Level2 --n_steps 1000 --out tmp/agent_run.npz
 """
 
+from __future__ import annotations
+
 import argparse
+import gzip
 import os
-import sys
-import time
+from typing import Optional
 
+import contra  # registers custom ROM integration
 import numpy as np
-import torch
-import warnings
-
-warnings.filterwarnings("ignore", message=".*Gym.*")
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 import stable_retro as retro
-from tqdm import tqdm
+import torch
+import torch.nn.functional as F
 
-from contra.replay import rewind_state, replay_actions, save_video, SKIP, FPS, GAME
-from contra.events import EV_PLAYER_DIE, EV_LEVELUP, EV_GAME_CLEAR, scan_events
-
+from contra.events import EV_PLAYER_DIE, ADDR_XSCROLL, EV_ENEMY_HIT
+from contra.inputs import DPAD_TABLE, BUTTON_TABLE
 from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_policy import NESPolicyModel
 from pixel2play.train import NESLightningModule
 
-import yaml
+# ── Constants ─────────────────────────────────────────────────────────────────
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "nes_150M.yaml")
-STATE_DIR   = "contra/integration/Contra-Nes"
+GAME              = "Contra-Nes"
+SPREAD_STATES_DIR = os.path.join(os.path.dirname(__file__), "../contra/spread_gun_states")
 
-# NES button order: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
-# Matches DPAD_ENCODING and BUTTON_ENCODING in nes_actions.py
-_DPAD_NES = np.array([
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: none
-    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 1: left
-    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 2: right
-    [0, 0, 0, 0, 1, 0, 0, 0, 0],  # 3: up
-    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: down
-    [0, 0, 0, 0, 1, 0, 1, 0, 0],  # 5: up-left
-    [0, 0, 0, 0, 1, 0, 0, 1, 0],  # 6: up-right
-    [0, 0, 0, 0, 0, 1, 1, 0, 0],  # 7: down-left
-    [0, 0, 0, 0, 0, 1, 0, 1, 0],  # 8: down-right
-], dtype=np.uint8)
-_BUTTON_NES = np.array([
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: none
-    [0, 0, 0, 0, 0, 0, 0, 0, 1],  # 1: A (jump)
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 2: B (fire)
-    [1, 0, 0, 0, 0, 0, 0, 0, 1],  # 3: A+B
-], dtype=np.uint8)
+N_STEPS   = 200       # model context window
+FRAME_H   = FRAME_W = 192
+EMBED_DIM = 1024
+EMU_SKIP  = 3         # env steps per agent step (20 Hz agent @ 60 Hz NES)
 
-_IMG_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-_IMG_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
+_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+_STD  = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+
+_DPAD_NES   = np.array(DPAD_TABLE,   dtype=np.int8)   # (9, 9)
+_BUTTON_NES = np.array(BUTTON_TABLE, dtype=np.int8)   # (4, 9)
 
 
-def _preprocess_frame(frame: np.ndarray, size: int = 192) -> torch.Tensor:
-    """(H, W, 3) uint8 → (1, 1, 3, size, size) float32 normalised, ready for tokenizer."""
-    img = frame.transpose(2, 0, 1).astype(np.float32) / 255.0  # (3, H, W)
-    img = (img - _IMG_MEAN) / _IMG_STD
-    t = torch.from_numpy(img).unsqueeze(0).unsqueeze(0)         # (1, 1, 3, H, W)
-    if t.shape[-2:] != (size, size):
-        t = torch.nn.functional.interpolate(
-            t.squeeze(0), size=(size, size), mode="bilinear", align_corners=False
-        ).unsqueeze(0)
-    return t
+def _sample(logits: torch.Tensor, temperature: float) -> int:
+    if temperature == 0.0:
+        return int(logits.argmax())
+    return int(torch.multinomial(torch.softmax(logits / temperature, dim=-1), 1))
 
 
-def _load_initial_state(level: int) -> bytes:
-    level_label = f"Level{level}"
+def _decode_action(dpad: int, button: int) -> np.ndarray:
+    return np.clip(_DPAD_NES[dpad] + _BUTTON_NES[button], 0, 1).astype(np.int8)
+
+
+def _xscroll(ram: np.ndarray) -> int:
+    return (int(ram[ADDR_XSCROLL]) << 8) | int(ram[ADDR_XSCROLL + 1])
+
+
+# ── Model loading ─────────────────────────────────────────────────────────────
+
+def load_model(checkpoint_path: str, device: torch.device) -> NESPolicyModel:
+    cfg = BackboneConfig(n_steps=N_STEPS, n_text_tokens=0, dropout=0.0)
+    module = NESLightningModule(cfg, lr=1e-4)
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state_dict = ckpt["state_dict"]
+    # torch.compile() adds '_orig_mod.' to keys — strip it if present
+    fixed = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
+    module.load_state_dict(fixed, strict=True)
+
+    model = module.model.to(device).eval()
+    model.backbone._build_block_masks()
+    return model
+
+
+# ── Environment setup ─────────────────────────────────────────────────────────
+
+def make_env(level: str):
     env = retro.make(
-        game=GAME, state=level_label,
+        game=GAME, state=level,
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
-    spread = os.path.join(STATE_DIR, f"{level_label}.state")
-    if level > 1 and os.path.exists(spread):
-        with open(spread, "rb") as f:
-            env.initial_state = f.read()
-    env.reset()
-    state = env.em.get_state()
-    env.close()
-    return state
+    obs, _ = env.reset()
+
+    if level != "Level1":
+        path = os.path.join(SPREAD_STATES_DIR, f"{level}.state")
+        for opener in (gzip.open, open):
+            try:
+                with opener(path, "rb") as f:
+                    state_bytes = f.read()
+                env.initial_state = state_bytes
+                obs, _ = env.reset()
+                break
+            except OSError:
+                continue
+
+    initial_state = env.em.get_state()
+    return env, obs, initial_state
 
 
-@torch.inference_mode()
-def play(
+# ── Frame tokenisation ────────────────────────────────────────────────────────
+
+def tokenize(obs: np.ndarray, tokenizer: torch.nn.Module, device: torch.device) -> torch.Tensor:
+    """(H, W, 3) uint8 → (1, EMBED_DIM) float32 on CPU."""
+    frame = torch.from_numpy(obs).permute(2, 0, 1).float() / 255.0   # (3, H, W)
+    frame = (frame.unsqueeze(0) - _MEAN) / _STD                       # (1, 3, H, W)
+    frame = F.interpolate(frame, size=(FRAME_H, FRAME_W), mode="bilinear", align_corners=False)
+    with torch.no_grad():
+        feat = tokenizer(frame.unsqueeze(1).to(device))                # (1, 1, 1, D)
+    return feat[0, 0].cpu().float()                                     # (1, D)
+
+
+# ── Core episode runner ───────────────────────────────────────────────────────
+
+def run_episode(
     model: NESPolicyModel,
-    tokenizer,
-    initial_state: bytes,
-    level: int,
-    device: torch.device,
-    T: int = 200,
-    n_text_tokens: int = 0,
-    max_steps: int = 3_000,
-    temperature: float = 0.0,
-) -> tuple[np.ndarray, bytes, str]:
-    """Run the agent live in the emulator.
-
-    Returns (actions (N, 9) uint8, initial_state bytes, outcome str).
-    Each logical step = SKIP=3 NES frames; the model sees the first frame.
-    The first T-1=199 steps use zero-padded image and action history.
+    level: str = "Level1",
+    n_steps: int = 2000,
+    temperature: float = 1.0,
+    device: Optional[torch.device] = None,
+) -> dict:
     """
-    level_label = f"Level{level}"
-    env = retro.make(
-        game=GAME, state=level_label,
-        use_restricted_actions=retro.Actions.ALL,
-        obs_type=retro.Observations.IMAGE,
-        render_mode=None,
-        inttype=retro.data.Integrations.CUSTOM_ONLY,
-    )
-    env.reset()
-    rewind_state(env, initial_state)
+    Run one episode and return gameplay metrics + recorded actions.
 
-    # Capture the very first frame (nes_0, before any action)
-    first_frame = env.em.get_screen().copy()
+    Returns dict with:
+        actions      : np.ndarray (N, 9) int8
+        initial_state: bytes
+        steps        : int   — steps survived before death / n_steps
+        xscroll      : int   — max horizontal scroll reached
+        enemies_hit  : float — total enemy HP damage dealt
+        died         : bool
+    """
+    if device is None:
+        device = next(model.parameters()).device
 
-    # Rolling feature + action buffers (zero-padded, T=200 history)
-    feat_dim   = tokenizer.embed_dim
-    n_img      = tokenizer.n_tokens
-    feat_buf   = torch.zeros(T, n_img, feat_dim, device=device)
-    text_buf   = torch.zeros(T, max(n_text_tokens, 0), 768, device=device) if n_text_tokens > 0 else torch.zeros(T, 0, 768, device=device)
-    dpad_buf   = torch.zeros(T, dtype=torch.long, device=device)
-    button_buf = torch.zeros(T, dtype=torch.long, device=device)
+    tokenizer = model.backbone.image_tokenizer
+    env, obs, initial_state = make_env(level)
 
-    all_actions: list[np.ndarray] = []
-    outcome      = "lose"
+    img_buf    = torch.zeros(N_STEPS, 1, EMBED_DIM)
+    dpad_buf   = torch.zeros(N_STEPS, dtype=torch.long)
+    button_buf = torch.zeros(N_STEPS, dtype=torch.long)
+    text_buf   = torch.zeros(N_STEPS, 0, 768)
+    buf_len    = 0
 
-    # pending_frame holds the frame to be placed at the start of each step,
-    # matching infer.py: roll → place frame → predict → store pred → step env.
-    pending_frame = first_frame
+    recorded_actions: list[np.ndarray] = []
+    max_xscroll  = 0
+    enemies_hit  = 0.0
+    died         = False
 
-    for step in tqdm(range(max_steps), desc=f"Level{level}", unit="step"):
-        # 1. Roll buffers; new T-1 slot starts zeroed for dpad/button
-        feat_buf   = torch.roll(feat_buf,   -1, dims=0)
-        text_buf   = torch.roll(text_buf,   -1, dims=0)
-        dpad_buf   = torch.roll(dpad_buf,   -1, dims=0)
-        button_buf = torch.roll(button_buf, -1, dims=0)
+    for step in range(n_steps):
+        feat = tokenize(obs, tokenizer, device)
 
-        # 2. Place current frame at T-1; action slot stays 0 (unknown, to be predicted)
-        frame_t = _preprocess_frame(pending_frame).to(device)
-        feat_buf[-1]   = tokenizer(frame_t).squeeze(0).squeeze(0)
-        dpad_buf[-1]   = 0
-        button_buf[-1] = 0
-
-        # 3. Predict from buffer
-        dpad_logits, button_logits = model(
-            feat_buf.unsqueeze(0),
-            dpad_buf.unsqueeze(0),
-            button_buf.unsqueeze(0),
-            text_buf.unsqueeze(0),
-        )
-        dpad_logits_step = dpad_logits[0, -1]
-        button_logits_step = button_logits[0, -1]
-        
-        if temperature > 0.0:
-            dpad_pred = torch.distributions.Categorical(logits=dpad_logits_step / temperature).sample().item()
-            button_pred = torch.distributions.Categorical(logits=button_logits_step / temperature).sample().item()
+        if buf_len < N_STEPS:
+            img_buf[buf_len] = feat
+            pos     = buf_len
+            buf_len += 1
         else:
-            dpad_pred   = dpad_logits_step.argmax().item()
-            button_pred = button_logits_step.argmax().item()
+            img_buf    = torch.roll(img_buf,    -1, dims=0)
+            dpad_buf   = torch.roll(dpad_buf,   -1, dims=0)
+            button_buf = torch.roll(button_buf, -1, dims=0)
+            img_buf[-1]    = feat
+            dpad_buf[-1]   = 0
+            button_buf[-1] = 0
+            pos = N_STEPS - 1
 
-        # 4. Store prediction at T-1 — becomes past context on next roll
-        dpad_buf[-1]   = dpad_pred
-        button_buf[-1] = button_pred
+        frames_d = img_buf.unsqueeze(0).to(device)
+        text_d   = text_buf.unsqueeze(0).to(device)
 
-        nes_action = (_DPAD_NES[dpad_pred] | _BUTTON_NES[button_pred]).astype(np.uint8)
-        all_actions.append(nes_action)
+        # Backbone: one pass
+        with torch.no_grad():
+            action_out_tokens = model.encode(
+                frames_d,
+                dpad_buf.unsqueeze(0).to(device),
+                button_buf.unsqueeze(0).to(device),
+                text_d,
+            )
 
-        # 5. Step env SKIP=3 NES frames; first frame is next model input
+        # ActionDecoder pass 1: dpad
+        with torch.no_grad():
+            dpad_logits, _ = model.decode(
+                action_out_tokens,
+                dpad_buf.unsqueeze(0).to(device),
+                button_buf.unsqueeze(0).to(device),
+            )
+        pred_dpad = _sample(dpad_logits[0, pos], temperature)
+
+        # ActionDecoder pass 2: button conditioned on pred_dpad
+        dpad_buf[pos] = pred_dpad
+        with torch.no_grad():
+            _, button_logits = model.decode(
+                action_out_tokens,
+                dpad_buf.unsqueeze(0).to(device),
+                button_buf.unsqueeze(0).to(device),
+            )
+        pred_button = _sample(button_logits[0, pos], temperature)
+        button_buf[pos] = pred_button
+
+        action = _decode_action(pred_dpad, pred_button)
+        recorded_actions.append(action)
+
         pre_ram = env.unwrapped.get_ram().copy()
-        for i in range(SKIP):
-            obs, _, _, _, _ = env.step(nes_action.copy())
+        for i in range(EMU_SKIP):
+            frame, _, terminated, truncated, _ = env.step(action.copy())
             if i == 0:
-                pending_frame = obs.copy()
-        curr_ram = env.unwrapped.get_ram().copy()
+                obs = frame
+            if terminated or truncated:
+                break
+        curr_ram = env.unwrapped.get_ram()
 
-        # Check terminal events
+        max_xscroll  = max(max_xscroll, _xscroll(curr_ram))
+        enemies_hit += EV_ENEMY_HIT.trigger(pre_ram, curr_ram)
+
         if EV_PLAYER_DIE.trigger(pre_ram, curr_ram):
-            print(f"  step {step}  PLAYER_DIE  lives {int(pre_ram[50])} → {int(curr_ram[50])}")
-            outcome = "lose"
+            died = True
             break
-        if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):
-            game_cleared = True
-            outcome = "game_clear"
-            break
-        if EV_LEVELUP.trigger(pre_ram, curr_ram):
-            leveled_up = True
-            outcome = "level_up"
+
+        if terminated or truncated:
             break
 
     env.close()
 
-    actions = np.stack(all_actions)  # (N, 9) uint8
-    return actions, outcome
+    return {
+        "actions":       np.stack(recorded_actions).astype(np.int8),
+        "initial_state": initial_state,
+        "steps":         len(recorded_actions),
+        "xscroll":       max_xscroll,
+        "enemies_hit":   enemies_hit,
+        "died":          died,
+    }
 
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="pixel2play agent play")
-    parser.add_argument("--checkpoint", required=True, help="Path to .ckpt file")
-    parser.add_argument("--level",      type=int, default=1, help="Level to play (default: 1)")
-    parser.add_argument("--max-steps",  type=int, default=1_000, help="Max logical steps")
-    parser.add_argument("--video",      default=None, help="Save replay MP4 to this path")
-    parser.add_argument("--out",        default="tmp/play_actions.npz", help="Save actions to this .npz")
-    parser.add_argument("--temperature", type=float, default=0.5, help="Temperature for sampling actions (0 for argmax)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--level",       default="Level1")
+    parser.add_argument("--n_steps",     type=int,   default=2000)
+    parser.add_argument("--out",         default="tmp/agent_run.npz")
+    parser.add_argument("--device",      default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--temperature", type=float, default=1.0,
+                        help="Sampling temperature. 0=argmax (deterministic)")
     args = parser.parse_args()
 
-    torch.set_float32_matmul_precision("high")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device)
+    print(f"Loading checkpoint: {args.checkpoint}  device={device}")
+    model = load_model(args.checkpoint, device)
 
-    cfg           = yaml.safe_load(open(CONFIG_FILE))
-    n_steps       = cfg["shared"]["n_seq_timesteps"]
-    lr            = cfg["stage3_finetune"]["optim"]["learning_rate"]
-    n_text_tokens = cfg["shared"].get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0]
+    result = run_episode(model, level=args.level, n_steps=args.n_steps,
+                         temperature=args.temperature, device=device)
 
-    backbone_cfg = BackboneConfig(n_steps=n_steps, n_text_tokens=n_text_tokens)
-    module       = NESLightningModule(backbone_cfg, lr=lr)
+    status = "DIED" if result["died"] else "SURVIVED"
+    print(f"{status} | steps={result['steps']} | xscroll={result['xscroll']} | enemies_hit={result['enemies_hit']:.0f}")
 
-    ckpt       = torch.load(args.checkpoint, map_location=device)
-    state_dict = {
-        k.replace("model._orig_mod.", "model."): v
-        for k, v in ckpt["state_dict"].items()
-    }
-    module.load_state_dict(state_dict)
-    raw_model = module.model.eval().to(device)
-    raw_model.backbone._build_block_masks()
-    tokenizer = raw_model.backbone.image_tokenizer.eval().to(device)
-    model     = torch.compile(raw_model)
-
-    # Warmup
-    print("Warming up...", flush=True)
-    dummy_feat = torch.zeros(1, n_steps, 1, 1024, device=device)
-    dummy_act  = torch.zeros(1, n_steps, dtype=torch.long, device=device)
-    dummy_text = torch.zeros(1, n_steps, n_text_tokens, 768, device=device)
-    model(dummy_feat, dummy_act, dummy_act, dummy_text)
-    print("Warmup done.\n", flush=True)
-
-    initial_state = _load_initial_state(args.level)
-
-    t0 = time.perf_counter()
-    actions, outcome = play(
-        model, tokenizer, initial_state,
-        level=args.level,
-        device=device,
-        T=n_steps,
-        n_text_tokens=n_text_tokens,
-        max_steps=args.max_steps,
-        temperature=args.temperature,
-    )
-    elapsed = time.perf_counter() - t0
-
-    n = len(actions)
-    print(f"\n  outcome={outcome}  steps={n}  "
-          f"elapsed={elapsed:.1f}s  ({n / FPS:.1f}s game-time)  "
-          f"{elapsed / n * 1000:.1f}ms/step")
-
-    # Save action sequence
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    np.savez(args.out, actions=actions, initial_state=np.frombuffer(initial_state, dtype=np.uint8),
-             level=f"Level{args.level}", outcome=outcome)
-    print(f"  actions saved → {args.out}")
-
-    # Replay to confirm outcome and optionally render video
-    print("\nReplaying to verify...")
-    want_video = bool(args.video)
-    result = replay_actions(
-        actions, initial_state=initial_state,
-        level=f"Level{args.level}",
-        want_video=want_video,
-        verbose=True,
+    np.savez_compressed(
+        args.out,
+        actions       = result["actions"],
+        initial_state = np.frombuffer(result["initial_state"], dtype=np.uint8),
+        level         = np.array(args.level),
+        fps           = np.array(20),
+        game          = np.array(GAME),
     )
-    print(f"  replay outcome: {result['result']}")
-
-    if want_video and result["video"] is not None:
-        save_video(result["video"], args.video)
-        print(f"  video saved → {args.video}")
+    print(f"Saved {result['steps']} actions → {args.out}")
+    print(f"Render video:  python contra/replay.py {args.out} --video out.mp4")
 
 
 if __name__ == "__main__":

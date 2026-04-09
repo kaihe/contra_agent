@@ -41,6 +41,32 @@ class NESPolicyModel(nn.Module):
         self.dpad_head   = nn.Linear(D, N_DPAD)
         self.button_head = nn.Linear(D, N_BUTTONS)
 
+    def _action_in(self, dpad: torch.Tensor, button: torch.Tensor) -> torch.Tensor:
+        return torch.stack([self.dpad_embed(dpad), self.button_embed(button)], dim=2)
+
+    def encode(
+        self,
+        frames: torch.Tensor,   # (B, T, 3, H, W) or (B, T, n_tokens, D)
+        dpad: torch.Tensor,     # (B, T)  int64
+        button: torch.Tensor,   # (B, T)  int64
+        text: torch.Tensor,     # (B, T, n_text, 768)
+    ) -> torch.Tensor:
+        """Run the backbone transformer only. Returns action_out_tokens (B, T, D).
+        action_out_tokens[t] is independent of dpad[t]/button[t] due to the causal mask,
+        so dummy values at the current step are fine."""
+        return self.backbone._encode(frames, self._action_in(dpad, button), text)
+
+    def decode(
+        self,
+        action_out_tokens: torch.Tensor,  # (B, T, D)  – cached from encode()
+        dpad: torch.Tensor,               # (B, T)  int64
+        button: torch.Tensor,             # (B, T)  int64
+    ):
+        """Run only the ActionDecoder on cached backbone features.
+        Returns (dpad_logits (B,T,N_DPAD), button_logits (B,T,N_BUTTONS))."""
+        action_out = self.backbone.action_decoder(action_out_tokens, self._action_in(dpad, button))
+        return self.dpad_head(action_out[:, :, 0, :]), self.button_head(action_out[:, :, 1, :])
+
     def forward(
         self,
         frames: torch.Tensor,   # (B, T, 3, H, W)

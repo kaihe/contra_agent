@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from pixel2play.dataset import NESDataset
 from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_policy import NESPolicyModel
+from pixel2play.play import run_episode
 
 DATA_FOLDER = "annotate/bc_data/Contra-Nes"
 CHECKPOINT_DIR = "tmp/checkpoints/nes_policy"
@@ -141,6 +142,39 @@ def main():
     module.model = torch.compile(module.model)
 
     from lightning.pytorch.callbacks import ModelCheckpoint
+
+    class GamePlayCallback(pl.Callback):
+        """Run one episode every N training steps and log gameplay metrics."""
+
+        def __init__(self, every_n_steps: int = 500, n_episode_steps: int = 1000):
+            self.every_n_steps   = every_n_steps
+            self.n_episode_steps = n_episode_steps
+
+        def on_train_batch_end(self, trainer, pl_module, _outputs, _batch, _batch_idx):
+            if trainer.global_step == 0 or trainer.global_step % self.every_n_steps != 0:
+                return
+
+            model = pl_module.model
+            # Unwrap torch.compile if needed
+            raw = getattr(model, "_orig_mod", model)
+            raw.eval()
+            try:
+                result = run_episode(raw, n_steps=self.n_episode_steps, temperature=1.0)
+            finally:
+                raw.train()
+
+            pl_module.log_dict({
+                "play/steps":       float(result["steps"]),
+                "play/xscroll":     float(result["xscroll"]),
+                "play/enemies_hit": float(result["enemies_hit"]),
+                "play/died":        float(result["died"]),
+            }, on_step=True, on_epoch=False)
+            logging.info(
+                f"[play step={trainer.global_step}] "
+                f"steps={result['steps']} xscroll={result['xscroll']} "
+                f"enemies_hit={result['enemies_hit']:.0f} died={result['died']}"
+            )
+
     checkpoint_cb = ModelCheckpoint(
         dirpath=args.checkpoint_dir,
         every_n_epochs=5,
@@ -157,7 +191,7 @@ def main():
         max_steps=max_steps,
         check_val_every_n_epoch=5,
         precision="bf16-mixed",
-        callbacks=[checkpoint_cb],
+        callbacks=[checkpoint_cb, GamePlayCallback()],
         fast_dev_run=args.fast_dev_run,
         default_root_dir="tmp",
     )

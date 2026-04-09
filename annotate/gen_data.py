@@ -51,7 +51,12 @@ def main():
             sys.exit(f"Error: no .npz files found in {src!r}")
         from tqdm import tqdm
         for npz in tqdm(npz_files, desc="gen_data", unit="rec"):
-            process(os.path.join(src, npz), use_text=use_text)
+            npz_path = os.path.join(src, npz)
+            try:
+                process(npz_path, use_text=use_text)
+            except AssertionError as e:
+                tqdm.write(f"  Deleting bad trace: {npz} ({e})")
+                os.remove(npz_path)
     else:
         sys.exit(f"Error: {src!r} is not a .npz file or a folder")
 

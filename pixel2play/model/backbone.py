@@ -243,27 +243,23 @@ class PolicyCausalTransformer(nn.Module):
 
         return torch.cat(steps, dim=1)                      # (B, max_seq_len, D)
 
-    def forward(
+    def _encode(
         self,
-        frames: torch.Tensor,           # (B, T, C, H, W)  – raw pixels, normalised
-        action_embeddings_in: torch.Tensor,  # (B, T, N, D) – teacher-forced action embeddings
-        text_tokens_embed: torch.Tensor,     # (B, T, n_text, text_dim) – text embeddings (0 if absent)
-    ):
-        """
-        Returns action_out: (B, T, N, D) – decoded action embeddings for each slot.
-        """
+        frames: torch.Tensor,
+        action_embeddings_in: torch.Tensor,
+        text_tokens_embed: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run image/text encoding + backbone transformer. Returns action_out_tokens (B, T, D)."""
         B, T = frames.shape[:2]
 
-        # Image tokens: skip tokenizer if precomputed features are passed (B, T, n_tokens, D)
         if frames.ndim == 4:
             img_tokens = frames.to(dtype=next(self.transformer.parameters()).dtype)
         else:
-            img_tokens = self.image_tokenizer(frames)      # (B, T, n_img, D)
+            img_tokens = self.image_tokenizer(frames)
 
-        # Text tokens: project and impute "no text" for zero embeddings
-        text = self.text_proj(text_tokens_embed)           # (B, T, n_text, D)
+        text = self.text_proj(text_tokens_embed)
         if self.cfg.n_text_tokens > 0:
-            is_zero = ~text.reshape(B * T, -1).any(dim=-1)    # (BT,)
+            is_zero = ~text.reshape(B * T, -1).any(dim=-1)
             text_bt = text.reshape(B * T, self.cfg.n_text_tokens, -1)
             text = torch.where(
                 is_zero.view(B * T, 1, 1),
@@ -271,14 +267,16 @@ class PolicyCausalTransformer(nn.Module):
                 text_bt,
             ).reshape(B, T, self.cfg.n_text_tokens, text.size(-1))
 
-        # Build flat sequence and run transformer
-        x = self._build_sequence(img_tokens, text, action_embeddings_in)   # (B, max_seq_len, D)
-        y = self.transformer(x)                                              # (B, max_seq_len, D)
+        x = self._build_sequence(img_tokens, text, action_embeddings_in)
+        y = self.transformer(x)
+        return y[:, self.action_out_idx, :]   # (B, T, D)
 
-        # Extract action_out positions → (B, T, D)
-        action_out_tokens = y[:, self.action_out_idx, :]                    # (B, T, D)
-
-        # Decode into per-slot action embeddings → (B, T, N, D)
-        action_out = self.action_decoder(action_out_tokens, action_embeddings_in)
-
-        return action_out
+    def forward(
+        self,
+        frames: torch.Tensor,                    # (B, T, C, H, W)
+        action_embeddings_in: torch.Tensor,      # (B, T, N, D)
+        text_tokens_embed: torch.Tensor,         # (B, T, n_text, text_dim)
+    ) -> torch.Tensor:
+        """Returns action_out: (B, T, N, D)."""
+        action_out_tokens = self._encode(frames, action_embeddings_in, text_tokens_embed)
+        return self.action_decoder(action_out_tokens, action_embeddings_in)
