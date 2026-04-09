@@ -145,6 +145,7 @@ def search_and_play(env, initial_emu_state: bytes,
                     patience: int, max_time: int,
                     level: int = 1,
                     max_rewind: int = 30,
+                    max_actions: int = 4000,
                     goal: str = "level_up",
                     verbose=True,
                     resume_from: str = None,
@@ -188,6 +189,10 @@ def search_and_play(env, initial_emu_state: bytes,
         if elapsed > max_time:
             if verbose:
                 print(f"\n  ⏱ Time budget exhausted ({max_time:.0f}s)")
+            break
+        if len(committed_actions) >= max_actions:
+            if verbose:
+                print(f"\n  ✂ Action limit reached ({max_actions}), abandoning trace")
             break
         if committed.done:
             if verbose:
@@ -334,6 +339,8 @@ def main():
     parser.add_argument("--goal",        type=str, default="level_up",
                         choices=["level_up", "game_clear"],
                         help="level_up: stop on level-up (default); game_clear: stop on game clear")
+    parser.add_argument("--max-actions", type=int, default=4000,
+                        help="Abandon trace if committed actions exceed this limit (default: 4000)")
     args = parser.parse_args()
 
     _load_bigram(args.level)
@@ -372,6 +379,7 @@ def main():
     print(f"  Max Rewind:     {args.max_rewind} steps")
     print(f"  Workers:        {args.workers if args.workers > 1 else 1}")
     print(f"  Goal:           {args.goal}")
+    print(f"  Max Actions:    {args.max_actions}")
     print(f"  Time Budget:    {args.max_time}s")
     if args.resume:
         print(f"  Resume:         {args.resume}")
@@ -385,6 +393,7 @@ def main():
         max_time=args.max_time,
         level=args.level,
         max_rewind=args.max_rewind,
+        max_actions=args.max_actions,
         goal=args.goal,
         resume_from=args.resume,
         pool=pool,

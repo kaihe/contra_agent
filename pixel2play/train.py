@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import random
+import time
 
 import lightning as pl
 import torch
@@ -12,7 +13,6 @@ from torch.utils.data import DataLoader
 from pixel2play.dataset import NESDataset
 from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_policy import NESPolicyModel
-from pixel2play.play import run_episode
 
 DATA_FOLDER = "annotate/bc_data/Contra-Nes"
 CHECKPOINT_DIR = "tmp/checkpoints/nes_policy"
@@ -39,6 +39,15 @@ class NESLightningModule(pl.LightningModule):
     def on_fit_start(self):
         # Block masks are built on CPU at __init__ time; rebuild on the actual device.
         self.model.backbone._build_block_masks()
+        self._epoch_end_time = None
+
+    def on_train_epoch_end(self):
+        self._epoch_end_time = time.perf_counter()
+
+    def on_train_epoch_start(self):
+        if self._epoch_end_time is not None:
+            gap = time.perf_counter() - self._epoch_end_time
+            logging.info(f"[timing] inter-epoch gap: {gap:.2f}s")
 
 
     def _step(self, batch):
@@ -124,7 +133,9 @@ def main():
     n_steps    = shared["n_seq_timesteps"]
     batch_size = stage3["training_dataset"]["batch_size"]
     lr         = stage3["optim"]["learning_rate"]
-    max_steps  = stage3["n_training_steps"]
+    max_steps              = stage3["n_training_steps"]
+    val_check_interval     = stage3["validation_step_interval"]
+    gameplay_step_interval = stage3["gameplay_step_interval"]
 
     n_text_tokens = shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0]
     dropout       = cfg.get("policy_model", {}).get("dropout", 0.0)
@@ -159,6 +170,7 @@ def main():
             raw = getattr(model, "_orig_mod", model)
             raw.eval()
             try:
+                from pixel2play.play import run_episode
                 result = run_episode(raw, n_steps=self.n_episode_steps, temperature=1.0)
             finally:
                 raw.train()
@@ -167,12 +179,12 @@ def main():
                 "play/steps":       float(result["steps"]),
                 "play/xscroll":     float(result["xscroll"]),
                 "play/enemies_hit": float(result["enemies_hit"]),
-                "play/died":        float(result["died"]),
+                "play/level_up":    float(result["level_up"]),
             }, on_step=True, on_epoch=False)
             logging.info(
                 f"[play step={trainer.global_step}] "
                 f"steps={result['steps']} xscroll={result['xscroll']} "
-                f"enemies_hit={result['enemies_hit']:.0f} died={result['died']}"
+                f"enemies_hit={result['enemies_hit']:.0f} level_up={result['level_up']}"
             )
 
     checkpoint_cb = ModelCheckpoint(
@@ -189,9 +201,9 @@ def main():
         accelerator="auto",
         devices="auto",
         max_steps=max_steps,
-        check_val_every_n_epoch=5,
+        val_check_interval=val_check_interval,
         precision="bf16-mixed",
-        callbacks=[checkpoint_cb, GamePlayCallback()],
+        callbacks=[checkpoint_cb, GamePlayCallback(every_n_steps=gameplay_step_interval)],
         fast_dev_run=args.fast_dev_run,
         default_root_dir="tmp",
     )

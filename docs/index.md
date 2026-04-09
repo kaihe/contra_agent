@@ -31,7 +31,7 @@ As a lifelong video game fan, I spend a lot of time playing games. That playtime
 
 The pipeline has two parts:
 
-- **Data collection** — screen capture and input logging during human gameplay, converted into (frame, action) training pairs
+- **Data collection** — screen capture and input logging during human gameplay, converted into (frame, text, action) training pairs
 - **Model training** — a vision model trained to map video frames to controller actions, fine-tuned with reinforcement learning against the game environment itself
 
 The long-term goal is an agent that can play any game I care about — RimWorld, Factorio, Stardew Valley. But every ambitious project needs a humble starting point.

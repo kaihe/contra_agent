@@ -18,7 +18,9 @@ A chunk of T consecutive steps yields:
   valid_mask : (T,)               bool    -- False for padding steps
 """
 
+import logging
 import os
+import time
 from typing import List
 
 import numpy as np
@@ -118,4 +120,9 @@ class NESDataset(Dataset):
 
     def __getitem__(self, idx):
         rec_idx, start = self._index[idx]
-        return self.recordings[rec_idx].get_chunk(start, self.n_steps)
+        t0 = time.perf_counter()
+        result = self.recordings[rec_idx].get_chunk(start, self.n_steps)
+        elapsed = time.perf_counter() - t0
+        if elapsed > 0.1:
+            logging.warning(f"[timing] slow get_chunk rec={rec_idx} start={start} {elapsed:.3f}s")
+        return result

@@ -58,7 +58,7 @@ def main():
         vals = counts[level]
         ax.hist(vals, bins=max(5, len(vals) // 2), color="steelblue", edgecolor="white")
         ax.axvline(best[level][0], color="tomato", linestyle="--", label=f"best={best[level][0]}")
-        ax.set_title(f"Level {level}")
+        ax.set_title(f"Level {level} ({len(vals)})")
         ax.set_xlabel("# actions")
         ax.set_ylabel("count")
         ax.legend(fontsize=8)

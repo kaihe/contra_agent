@@ -82,18 +82,34 @@ class BCDataSample:
         os.makedirs(out_dir, exist_ok=True)
         return cls(os.path.join(out_dir, f"{rec_id}.npz"))
 
+    def save_from_features(
+        self,
+        img_features: np.ndarray,
+        dpad: np.ndarray,
+        button: np.ndarray,
+        extra: dict | None = None,
+    ) -> str:
+        """Persist pre-computed img_features plus action labels. Returns output path."""
+        arrays = {} if extra is None else dict(extra)
+        arrays.update(img_features=img_features, dpad=dpad, button=button)
+        np.savez(self.features_path, **arrays)
+        return self.features_path
+
     def compute_features(
         self,
         npz_path: str,
         tokenizer,
         use_text: bool = False,
-        batch_size: int = 64,
-        device: str = "cuda"
+        chunk_size: int = 32,
+        device: str = "cuda",
     ) -> str:
-        """Record a video via replay_actions, extract frames, tokenize, optionally embed text.
+        """Step the emulator, encode frames in chunks of chunk_size, save features.
+
+        Peak frame memory = chunk_size frames (uint8) + chunk_size frames (float32)
+        regardless of recording length.
 
         Saves bc_features.npz with:
-            img_features : float16  (N+1, n_tokens, D)
+            img_features : float16  (N, n_tokens, D)
             dpad         : int8     (N,)
             button       : int8     (N,)
             text         : float16  (N, 1, 768)   only present if use_text=True
@@ -101,7 +117,10 @@ class BCDataSample:
         Returns the path to the saved file.
         """
         import torch
-        from contra.replay import save_video
+        import torch.nn.functional as F
+        import stable_retro as retro
+        from contra.replay import rewind_state, GAME, SKIP
+        from contra.events import EV_LEVELUP, EV_GAME_CLEAR
 
         out_path = self.features_path
         if os.path.isfile(out_path):
@@ -110,7 +129,6 @@ class BCDataSample:
 
         npz_data    = np.load(npz_path, allow_pickle=True)
         raw_actions = npz_data["actions"]                          # (N, 9) uint8
-        fps         = int(npz_data.get("fps", 20))
         N           = len(raw_actions)
 
         # --- Encode dpad / button class indices ---
@@ -119,23 +137,41 @@ class BCDataSample:
         for i, act in enumerate(raw_actions):
             dpad[i], button[i] = encode(_nes_keys(act))
 
-        # --- Replay env, get frames ---
-        result     = replay_actions(npz_path, want_video=True, verbose=False)
-        assert result["result"] != "lose", f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
-        raw_frames = result["video"]                               # (N+1, H, W, 3) uint8
+        tokenizer = tokenizer.to(device).eval()
+        _mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
+        _std  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
 
-        # --- Text embeddings (optional) — save video only if Gemini needs it ---
-        arrays = {}
+        def encode_chunk(frames: list) -> np.ndarray:
+            """Preprocess and encode a list of (H, W, 3) uint8 frames. Returns float16."""
+            arr = np.stack(frames).transpose(0, 3, 1, 2).astype(np.float32)
+            arr = (arr / 255.0 - _mean) / _std
+            t = torch.from_numpy(arr)
+            if t.shape[-2:] != (192, 192):
+                t = F.interpolate(t, (192, 192), mode="bilinear", align_corners=False)
+            with torch.no_grad():
+                feats = tokenizer(t.to(device).unsqueeze(1)).squeeze(1)  # (B, n_tokens, D)
+            return feats.cpu().float().numpy().astype(np.float16)
+
+        # --- Text annotation (requires full video for Gemini) ---
+        extra = {}
+        raw_frames_for_text = None
         if use_text:
+            from contra.replay import save_video
             from annotate.get_text_annotation import annotate_video, _get_gemma_st
             api_key = os.environ.get("GEMINI_API_KEY")
             if not api_key:
                 raise ValueError("Set GEMINI_API_KEY environment variable")
+            fps = int(npz_data.get("fps", 20))
+
+            result = replay_actions(npz_path, want_video=True, verbose=False)
+            assert result["result"] != "lose", \
+                f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
+            raw_frames_for_text = result["video"]                  # (N+1, H, W, 3) uint8
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
                 video_path = f.name
             try:
-                save_video(raw_frames, video_path)
+                save_video(raw_frames_for_text, video_path)
                 _, macros = annotate_video(video_path, api_key, fps)
             finally:
                 os.unlink(video_path)
@@ -147,37 +183,64 @@ class BCDataSample:
                 start = macro["start_frame"] - 1
                 end   = macro["end_frame"] if macro["end_frame"] is not None else N
                 text[start:end] = vec.reshape(1, 768).astype(np.float16)
-            arrays["text"] = text
+            extra["text"] = text
 
-        # --- Tokenize frames ---
-        _mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-        _std  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
-        frames   = (raw_frames.transpose(0, 3, 1, 2).astype(np.float32) / 255.0 - _mean) / _std
-        frames_t = torch.from_numpy(frames)
-
-        # Resize to tokenizer input resolution if needed
-        if frames_t.shape[-2:] != (192, 192):
-            frames_t = torch.nn.functional.interpolate(
-                frames_t, size=(192, 192), mode="bilinear", align_corners=False
-            )
-
-        tokenizer = tokenizer.to(device).eval()
+        # --- Stream replay + chunk encode ---
         all_feats = []
-        with torch.no_grad():
-            for i in range(0, len(frames_t), batch_size):
-                batch = frames_t[i:i + batch_size].to(device).unsqueeze(1)  # (B, 1, 3, H, W)
-                feats = tokenizer(batch).squeeze(1)                          # (B, n_tokens, D)
-                all_feats.append(feats.cpu().float().numpy())
-        img_features = np.concatenate(all_feats, axis=0).astype(np.float16)  # (N+1, n_tokens, D)
 
-        # Drop the final nes_N frame so img_features length matches actions
-        img_features = img_features[:-1]
+        if raw_frames_for_text is not None:
+            # Already have frames from the use_text replay; encode them in chunks
+            for i in range(0, len(raw_frames_for_text), chunk_size):
+                chunk = list(raw_frames_for_text[i:i + chunk_size])
+                all_feats.append(encode_chunk(chunk))
+            del raw_frames_for_text
+        else:
+            # Step emulator directly; never hold more than chunk_size frames at once
+            env = retro.make(
+                game=GAME,
+                state=retro.State.NONE,
+                use_restricted_actions=retro.Actions.ALL,
+                obs_type=retro.Observations.IMAGE,
+                render_mode=None,
+                inttype=retro.data.Integrations.CUSTOM_ONLY,
+            )
+            env.reset()
+            rewind_state(env, bytes(npz_data["initial_state"]))
 
-        # --- Save ---
-        arrays.update(img_features=img_features, dpad=dpad, button=button)
-        np.savez(out_path, **arrays)
+            frame_buf    = [env.em.get_screen().copy()]            # nes_0
+            leveled_up   = False
+            game_cleared = False
 
-        return out_path
+            for act in raw_actions:
+                pre_ram = env.unwrapped.get_ram().copy()
+                act_arr = np.asarray(act, dtype=np.uint8)
+                for i in range(SKIP):
+                    obs, _, _, _, _ = env.step(act_arr.copy())
+                    if i == 0:
+                        frame_buf.append(obs.copy())
+                curr_ram = env.unwrapped.get_ram()
+
+                if EV_LEVELUP.trigger(pre_ram, curr_ram):
+                    leveled_up = True
+                if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):
+                    game_cleared = True
+
+                if len(frame_buf) >= chunk_size:
+                    all_feats.append(encode_chunk(frame_buf))
+                    frame_buf = []
+
+            env.close()
+
+            outcome = "game_clear" if game_cleared else "level_up" if leveled_up else "lose"
+            assert outcome != "lose", \
+                f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
+
+            if frame_buf:
+                all_feats.append(encode_chunk(frame_buf))
+
+        img_features = np.concatenate(all_feats, axis=0)[:-1]     # drop final nes_N frame
+
+        return self.save_from_features(img_features, dpad, button, extra)
 
     @property
     def has_features(self) -> bool:

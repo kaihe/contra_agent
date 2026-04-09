@@ -28,7 +28,7 @@ import stable_retro as retro
 import torch
 import torch.nn.functional as F
 
-from contra.events import EV_PLAYER_DIE, ADDR_XSCROLL, EV_ENEMY_HIT
+from contra.events import EV_PLAYER_DIE, ADDR_XSCROLL, EV_ENEMY_HIT, EV_LEVELUP
 from contra.inputs import DPAD_TABLE, BUTTON_TABLE
 from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_policy import NESPolicyModel
@@ -140,7 +140,7 @@ def run_episode(
         steps        : int   — steps survived before death / n_steps
         xscroll      : int   — max horizontal scroll reached
         enemies_hit  : float — total enemy HP damage dealt
-        died         : bool
+        level_up     : bool
     """
     if device is None:
         device = next(model.parameters()).device
@@ -157,7 +157,7 @@ def run_episode(
     recorded_actions: list[np.ndarray] = []
     max_xscroll  = 0
     enemies_hit  = 0.0
-    died         = False
+    level_up     = False
 
     for step in range(n_steps):
         feat = tokenize(obs, tokenizer, device)
@@ -222,8 +222,11 @@ def run_episode(
         max_xscroll  = max(max_xscroll, _xscroll(curr_ram))
         enemies_hit += EV_ENEMY_HIT.trigger(pre_ram, curr_ram)
 
+        if EV_LEVELUP.trigger(pre_ram, curr_ram):
+            level_up = True
+            break
+
         if EV_PLAYER_DIE.trigger(pre_ram, curr_ram):
-            died = True
             break
 
         if terminated or truncated:
@@ -237,7 +240,7 @@ def run_episode(
         "steps":         len(recorded_actions),
         "xscroll":       max_xscroll,
         "enemies_hit":   enemies_hit,
-        "died":          died,
+        "level_up":      level_up,
     }
 
 
@@ -261,7 +264,7 @@ def main():
     result = run_episode(model, level=args.level, n_steps=args.n_steps,
                          temperature=args.temperature, device=device)
 
-    status = "DIED" if result["died"] else "SURVIVED"
+    status = "LEVEL UP" if result["level_up"] else "FAILED"
     print(f"{status} | steps={result['steps']} | xscroll={result['xscroll']} | enemies_hit={result['enemies_hit']:.0f}")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
