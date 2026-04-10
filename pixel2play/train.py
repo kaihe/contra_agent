@@ -189,12 +189,9 @@ def main():
 
     checkpoint_cb = ModelCheckpoint(
         dirpath=args.checkpoint_dir,
-        every_n_epochs=5,
-        filename="ckpt-{epoch:04d}-{val/loss:.4f}",
-        save_top_k=3,
-        monitor="val/loss",
-        mode="min",
-        save_last=True,
+        filename="last",
+        save_top_k=1,
+        enable_version_counter=False,
     )
 
     trainer = pl.Trainer(

@@ -31,10 +31,11 @@ import numpy as np
 import stable_retro as retro
 from contra.replay import rewind_state, step_env
 from contra.inputs import DPAD_TABLE, BUTTON_TABLE, NUM_DPAD, NUM_BUTTONS
-from contra.events import compute_reward, scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR
+from contra.events import compute_reward, scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR, ADDR_LEVEL_ROUTINE
 
 _death_ev      = EV_PLAYER_DIE
 _game_clear_ev = EV_GAME_CLEAR
+_NOOP_ACTION   = np.zeros(9, dtype=np.uint8)
 
 GAME = "Contra-Nes"
 DEFAULT_STATE_BY_LEVEL = {i: f"Level{i}" for i in range(1, 9)}
@@ -57,13 +58,42 @@ _DPAD_NP   = np.array(DPAD_TABLE,   dtype=np.uint8)
 _BUTTON_NP = np.array(BUTTON_TABLE, dtype=np.uint8)
 NUM_ACTIONS = NUM_DPAD * NUM_BUTTONS  # 28
 
+# Trimmed action space: drop diagonal d-pad (DL, DR) and Fire+Jump combo.
+# Dpad  : _, L, R, U, D, UL, UR  (indices 0-6; drop DL=7, DR=8)
+# Button: _, J, F                 (indices 0-2; drop FJ=3)
+# Total : 7 × 3 = 21 actions
+_TRIMMED_DPAD    = [0, 1, 2, 3, 4, 5, 6]
+_TRIMMED_BUTTONS = [0, 1, 2]
+TRIMMED_ACTION_INDICES = np.array(
+    [d * NUM_BUTTONS + b for d in _TRIMMED_DPAD for b in _TRIMMED_BUTTONS],
+    dtype=np.int32,
+)
+NUM_TRIMMED = len(TRIMMED_ACTION_INDICES)  # 21
+
 _UNIFORM_PRIOR = np.full((NUM_ACTIONS, NUM_ACTIONS), 1.0 / NUM_ACTIONS, dtype=np.float32)
 _ACTION_PRIORS: dict[int, np.ndarray] = {}  # level (1-indexed) → bigram prior
-_ALL_ACTIONS   = np.arange(NUM_ACTIONS)
+
+# Precomputed per-row trimmed sub-priors: shape (NUM_ACTIONS, NUM_TRIMMED).
+# Row i gives the probability of each trimmed action given previous action i.
+_TRIMMED_PRIORS: dict[int, np.ndarray] = {}  # level → (NUM_ACTIONS, NUM_TRIMMED)
+
+
+def _build_trimmed_prior(full_prior: np.ndarray) -> np.ndarray:
+    """Extract and renormalise trimmed columns from a full (28,28) prior."""
+    sub = full_prior[:, TRIMMED_ACTION_INDICES].astype(np.float64)
+    row_sums = sub.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    return (sub / row_sums).astype(np.float32)
 
 
 def _get_prior(level: int) -> np.ndarray:
     return _ACTION_PRIORS.get(level, _UNIFORM_PRIOR)
+
+
+def _get_trimmed_prior(level: int) -> np.ndarray:
+    if level not in _TRIMMED_PRIORS:
+        _TRIMMED_PRIORS[level] = _build_trimmed_prior(_get_prior(level))
+    return _TRIMMED_PRIORS[level]
 
 
 # ── Parallel rollout worker ────────────────────────────────────────────────────
@@ -106,6 +136,7 @@ def _load_bigram(start_level: int) -> None:
             prior = data[key]
             if prior.shape == (NUM_ACTIONS, NUM_ACTIONS):
                 _ACTION_PRIORS[level] = prior
+                _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior
                 print(f"Loaded action bigram prior for {key}")
             else:
                 print(f"WARNING: bigram shape {prior.shape} != ({NUM_ACTIONS},{NUM_ACTIONS}) for {key}, using uniform.")
@@ -116,13 +147,13 @@ def _load_bigram(start_level: int) -> None:
 def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1) -> tuple:
     """Returns (seq, cumulative_reward, died)."""
     rewind_state(env, start_emu_state)
-    prior = _get_prior(level)
-    # prior = _UNIFORM_PRIOR
-    prev_idx = np.random.randint(NUM_ACTIONS)
+    trimmed_prior = _get_trimmed_prior(level)
+    # Start from a random trimmed action index
+    prev_idx = int(np.random.choice(TRIMMED_ACTION_INDICES))
     cumulative_reward = 0.0
     seq = []
     for _ in range(length):
-        prev_idx = int(np.random.choice(_ALL_ACTIONS, p=prior[prev_idx]))
+        prev_idx = int(np.random.choice(TRIMMED_ACTION_INDICES, p=trimmed_prior[prev_idx]))
         act = (_DPAD_NP[prev_idx // NUM_BUTTONS] | _BUTTON_NP[prev_idx % NUM_BUTTONS]).copy()
 
         pre_ram = env.unwrapped.get_ram().copy()
@@ -198,6 +229,29 @@ def search_and_play(env, initial_emu_state: bytes,
             if verbose:
                 print(f"\n  🏆 WIN!  time={elapsed:.1f}s  steps={len(committed_actions)}")
             break
+
+        # ── 0. No-op wait during level transition (routine 0x08/0x09) ───────
+        rewind_state(env, committed.emu_state)
+        ram_now = env.unwrapped.get_ram()
+        if int(ram_now[ADDR_LEVEL_ROUTINE]) in (0x08, 0x09):
+            pre_ram = ram_now.copy()
+            step_env(env, _NOOP_ACTION)
+            curr_ram = env.unwrapped.get_ram()
+            committed.emu_state = env.em.get_state()
+            new_level = get_level(curr_ram)
+            if new_level != current_level:
+                current_level = new_level
+            if goal == "game_clear" and _game_clear_ev.trigger(pre_ram, curr_ram):
+                committed.done = True
+            elif goal == "level_up" and new_level != level:
+                committed.done = True
+            for ev in scan_events(pre_ram, curr_ram, len(committed_actions)):
+                tag = ev['tag'] + (f"({ev['detail']})" if ev['detail'] else "")
+                pending_events.append(tag)
+            committed_actions.append(_NOOP_ACTION.copy())
+            states.append(committed.emu_state)
+            rewards.append(rewards[-1] if rewards else 0.0)
+            continue
 
         # ── 1. Monte Carlo lookahead ──────────────────────────────────────────
         task = (committed.emu_state, rollout_len, current_level)
