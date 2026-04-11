@@ -5,6 +5,8 @@ import re
 import random
 import time
 
+import numpy as np
+
 import lightning as pl
 import torch
 import yaml
@@ -14,7 +16,6 @@ from pixel2play.dataset import NESDataset
 from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_policy import NESPolicyModel
 
-DATA_FOLDER = "annotate/bc_data/Contra-Nes"
 CHECKPOINT_DIR = "tmp/checkpoints/nes_policy"
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "nes_150M.yaml")
 
@@ -82,6 +83,7 @@ class NESDataModule(pl.LightningDataModule):
         self.n_text_tokens = n_text_tokens
 
     def setup(self, stage=None):
+        self._epoch_counter = 0
         full = NESDataset(self.data_root, n_steps=self.n_steps, n_text_tokens=self.n_text_tokens)
 
         # Group recordings by level, then pick 1 val recording per level (stratified).
@@ -104,6 +106,11 @@ class NESDataModule(pl.LightningDataModule):
         self.train_set = NESDataset.from_recordings(train_recs, self.n_steps)
         self.val_set   = NESDataset.from_recordings(val_recs,   self.n_steps)
 
+    def on_train_epoch_start(self):
+        rng = np.random.RandomState(self._epoch_counter)
+        self.train_set.resample(rng)
+        self._epoch_counter += 1
+
     def train_dataloader(self):
         return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
 
@@ -123,7 +130,7 @@ def main():
     stage3   = cfg["stage3_finetune"]
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_folder",    default=DATA_FOLDER)
+    parser.add_argument("--data_folder",    default=stage3["training_dataset"]["data_folder"])
     parser.add_argument("--checkpoint_dir", default=CHECKPOINT_DIR)
     parser.add_argument("--fast_dev_run",   action="store_true")
     args = parser.parse_args()
@@ -133,9 +140,7 @@ def main():
     n_steps    = shared["n_seq_timesteps"]
     batch_size = stage3["training_dataset"]["batch_size"]
     lr         = stage3["optim"]["learning_rate"]
-    max_steps              = stage3["n_training_steps"]
-    val_check_interval     = stage3["validation_step_interval"]
-    gameplay_step_interval = stage3["gameplay_step_interval"]
+    max_epochs             = stage3.get("n_epochs", 5)
 
     n_text_tokens = shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0]
     dropout       = cfg.get("policy_model", {}).get("dropout", 0.0)
@@ -155,16 +160,12 @@ def main():
     from lightning.pytorch.callbacks import ModelCheckpoint
 
     class GamePlayCallback(pl.Callback):
-        """Run one episode every N training steps and log gameplay metrics."""
+        """Run one episode after each training epoch and log gameplay metrics."""
 
-        def __init__(self, every_n_steps: int = 500, n_episode_steps: int = 1000):
-            self.every_n_steps   = every_n_steps
+        def __init__(self, n_episode_steps: int = 1000):
             self.n_episode_steps = n_episode_steps
 
-        def on_train_batch_end(self, trainer, pl_module, _outputs, _batch, _batch_idx):
-            if trainer.global_step == 0 or trainer.global_step % self.every_n_steps != 0:
-                return
-
+        def on_train_epoch_end(self, trainer, pl_module):
             model = pl_module.model
             # Unwrap torch.compile if needed
             raw = getattr(model, "_orig_mod", model)
@@ -180,9 +181,9 @@ def main():
                 "play/xscroll":     float(result["xscroll"]),
                 "play/enemies_hit": float(result["enemies_hit"]),
                 "play/level_up":    float(result["level_up"]),
-            }, on_step=True, on_epoch=False)
+            }, on_epoch=True)
             logging.info(
-                f"[play step={trainer.global_step}] "
+                f"[play epoch={trainer.current_epoch}] "
                 f"steps={result['steps']} xscroll={result['xscroll']} "
                 f"enemies_hit={result['enemies_hit']:.0f} level_up={result['level_up']}"
             )
@@ -197,10 +198,10 @@ def main():
     trainer = pl.Trainer(
         accelerator="auto",
         devices="auto",
-        max_steps=max_steps,
-        val_check_interval=val_check_interval,
+        max_epochs=max_epochs,
+        check_val_every_n_epoch=1,
         precision="bf16-mixed",
-        callbacks=[checkpoint_cb, GamePlayCallback(every_n_steps=gameplay_step_interval)],
+        callbacks=[checkpoint_cb, GamePlayCallback()],
         fast_dev_run=args.fast_dev_run,
         default_root_dir="tmp",
     )

@@ -225,6 +225,16 @@ def main() -> None:
     first_dir = os.path.dirname(os.path.abspath(paths[0]))
     out_dir   = os.path.normpath(os.path.join(first_dir, "..", "mc_trace_pruned"))
 
+    if args.save:
+        already = {os.path.basename(p) for p in paths
+                   if os.path.exists(os.path.join(out_dir, os.path.basename(p)))}
+        if already:
+            print(f"  SKIP {len(already)} already-pruned file(s) in {out_dir}/")
+        paths = [p for p in paths if os.path.basename(p) not in already]
+        if not paths:
+            print("All traces already pruned.")
+            return
+
     tasks = [(p, args.verify, args.save, out_dir) for p in paths]
 
     total_orig   = 0

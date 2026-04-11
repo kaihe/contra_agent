@@ -51,6 +51,10 @@ import numpy as np
 from contra.replay import replay_actions
 from pixel2play.model.nes_actions import encode
 
+_NOOP = np.zeros(9, dtype=np.uint8)
+
+_NOOP = np.zeros(9, dtype=np.uint8)
+
 # NES MultiBinary(9): [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 _NES_KEY_MAP = [(0, "f"), (4, "w"), (5, "s"), (6, "a"), (7, "d"), (8, "j")]
 
@@ -73,12 +77,13 @@ class BCDataSample:
         return cls(features_path)
 
     @classmethod
-    def create(cls, npz_path: str, game: str) -> "BCDataSample":
+    def create(cls, npz_path: str, game: str, out_dir: str | None = None) -> "BCDataSample":
         """Return a BCDataSample handle pointing to the output path.
         Call compute_features() afterwards to produce the training data.
         """
         rec_id  = os.path.splitext(os.path.basename(npz_path))[0]
-        out_dir = os.path.join(os.path.dirname(__file__), "bc_data", game)
+        if out_dir is None:
+            out_dir = os.path.join(os.path.dirname(__file__), "bc_data", game)
         os.makedirs(out_dir, exist_ok=True)
         return cls(os.path.join(out_dir, f"{rec_id}.npz"))
 
@@ -119,7 +124,7 @@ class BCDataSample:
         import torch
         import torch.nn.functional as F
         import stable_retro as retro
-        from contra.replay import rewind_state, GAME, SKIP
+        from contra.replay import rewind_state, step_env, GAME, SKIP
         from contra.events import EV_LEVELUP, EV_GAME_CLEAR
 
         out_path = self.features_path
@@ -131,11 +136,8 @@ class BCDataSample:
         raw_actions = npz_data["actions"]                          # (N, 9) uint8
         N           = len(raw_actions)
 
-        # --- Encode dpad / button class indices ---
         dpad   = np.empty(N, dtype=np.int8)
         button = np.empty(N, dtype=np.int8)
-        for i, act in enumerate(raw_actions):
-            dpad[i], button[i] = encode(_nes_keys(act))
 
         tokenizer = tokenizer.to(device).eval()
         _mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
@@ -211,20 +213,40 @@ class BCDataSample:
             leveled_up   = False
             game_cleared = False
 
-            for act in raw_actions:
-                pre_ram = env.unwrapped.get_ram().copy()
-                act_arr = np.asarray(act, dtype=np.uint8)
-                for i in range(SKIP):
-                    obs, _, _, _, _ = env.step(act_arr.copy())
-                    if i == 0:
-                        frame_buf.append(obs.copy())
-                curr_ram = env.unwrapped.get_ram()
+            for i, act in enumerate(raw_actions):
+                act_arr   = np.asarray(act, dtype=np.uint8)
+                pre_ram   = env.unwrapped.get_ram().copy()
+                cur_state = env.em.get_state()
 
+                # Apply original action, capture first obs frame
+                obs_frame = None
+                for j in range(SKIP):
+                    obs, _, _, _, _ = env.step(act_arr.copy())
+                    if j == 0:
+                        obs_frame = obs.copy()
+                ram_orig  = env.unwrapped.get_ram().copy()
+                next_orig = env.em.get_state()
+
+                # Test NOOP from same state
+                rewind_state(env, cur_state)
+                step_env(env, _NOOP)
+                ram_noop = env.unwrapped.get_ram().copy()
+
+                # If action had no effect, label it as no-op (env stays in noop state)
+                # If effective, rewind to original progression
+                if np.array_equal(ram_orig, ram_noop):
+                    dpad[i], button[i] = encode(_nes_keys(_NOOP))
+                else:
+                    dpad[i], button[i] = encode(_nes_keys(act_arr))
+                    rewind_state(env, next_orig)
+
+                curr_ram = env.unwrapped.get_ram()
                 if EV_LEVELUP.trigger(pre_ram, curr_ram):
                     leveled_up = True
                 if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):
                     game_cleared = True
 
+                frame_buf.append(obs_frame)
                 if len(frame_buf) >= chunk_size:
                     all_feats.append(encode_chunk(frame_buf))
                     frame_buf = []

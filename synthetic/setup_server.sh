@@ -30,7 +30,7 @@ sudo apt update -qq
 
 # 2. Install essential packages
 echo "→ Installing Python and basic tools..."
-sudo apt install -y python3-full python3-pip python3-venv git curl wget unzip
+sudo apt install -y python3-full python3-pip python3-venv git curl wget unzip which
 
 # 3. Clone or update the repository
 PROJECT_DIR="$HOME/code/contra_agent"
@@ -76,11 +76,20 @@ fi
 echo "→ Installing project in editable mode..."
 pip install -e .
 
-# 5. Add convenient alias 'act' to quickly activate the environment
-echo "→ Adding 'act' alias for easy activation..."
+# 5. Add convenient alias 'act' and set .venv python as default
+echo "→ Adding 'act' alias and setting .venv python as default..."
 if ! grep -q "alias act=" "$HOME/.bashrc"; then
     echo 'alias act="cd ~/code/contra_agent && source .venv/bin/activate"' >> "$HOME/.bashrc"
     echo 'alias cenv="cd ~/code/contra_agent"' >> "$HOME/.bashrc"
+fi
+
+# Prepend .venv bin to PATH so python3/python always resolves to the venv
+if ! grep -q "contra_agent/.venv/bin" "$HOME/.bashrc"; then
+    echo 'export PATH="$HOME/code/contra_agent/.venv/bin:$PATH"' >> "$HOME/.bashrc"
+fi
+# Also add to .profile so it applies to non-interactive (login) shells
+if ! grep -q "contra_agent/.venv/bin" "$HOME/.profile"; then
+    echo 'export PATH="$HOME/code/contra_agent/.venv/bin:$PATH"' >> "$HOME/.profile"
 fi
 
 # Final message
