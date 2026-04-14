@@ -54,9 +54,6 @@ fi
 # 4. Clean up any old/broken venv and create a clean one
 echo "→ Setting up clean Python virtual environment..."
 
-# Remove old polluted venvs if they exist
-rm -rf venv contra .venv_old 2>/dev/null || true
-
 # Create fresh hidden venv (best practice)
 python3 -m venv .venv
 

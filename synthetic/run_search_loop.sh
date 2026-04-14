@@ -2,7 +2,20 @@
 # run_search_loop.sh — randomly search any level forever.
 # Press Ctrl+C to stop.
 
-trap 'echo ""; echo "Stopped."; exit 0' SIGINT SIGTERM
+TOTAL_TIME=0
+TOTAL_RUNS=0
+
+print_avg_search_time() {
+    if [ "${TOTAL_RUNS}" -gt 0 ]; then
+        AVG=$(echo "scale=1; ${TOTAL_TIME} / ${TOTAL_RUNS}" | bc)
+        echo "  Runs completed : ${TOTAL_RUNS}"
+        echo "  Avg search time: ${AVG}s"
+    else
+        echo "  No runs completed."
+    fi
+}
+
+trap 'echo ""; echo "Stopped."; print_avg_search_time; exit 0' SIGINT SIGTERM
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TRACE_DIR="${SCRIPT_DIR}/mc_trace"
@@ -33,7 +46,13 @@ while true; do
     echo "  Run #${RUN}   level: ${LEVEL}"
     echo "────────────────────────────────────────"
 
+    T_START=$(date +%s%N)
     python "${SCRIPT_DIR}/mc_search.py" \
         --level ${LEVEL} \
         --goal  level_up
+    T_END=$(date +%s%N)
+    ELAPSED=$(echo "scale=1; (${T_END} - ${T_START}) / 1000000000" | bc)
+    TOTAL_TIME=$(echo "scale=1; ${TOTAL_TIME} + ${ELAPSED}" | bc)
+    TOTAL_RUNS=$((TOTAL_RUNS + 1))
+    echo "  Search time: ${ELAPSED}s  (avg over ${TOTAL_RUNS} runs: $(echo "scale=1; ${TOTAL_TIME} / ${TOTAL_RUNS}" | bc)s)"
 done

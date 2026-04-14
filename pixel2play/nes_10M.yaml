@@ -44,7 +44,7 @@ stage3_finetune:
   training_dataset:
     batch_size: &stage3_batch_size 32
     local_prefix: dataset
-    data_folder: annotate/bc_data/level1_ram
+    data_folder: annotate/bc_data/level_all_ram
     always_labelled: true
     warn_on_starvation: false
     rand_augmentation:

@@ -33,8 +33,8 @@ class Recording:
 
     def __init__(self, features_path: str, n_text_tokens: int = 1):
         self.path = features_path
-        data = np.load(features_path, mmap_mode="r")
-        self._ram    = data["ram"]                                           # (N, 2048) uint8
+        data = np.load(features_path)
+        self._ram    = torch.from_numpy(data["ram"])                         # (N, 2048) uint8, in RAM
         self._dpad   = torch.from_numpy(data["dpad"].astype(np.int64))      # (N,)
         self._button = torch.from_numpy(data["button"].astype(np.int64))    # (N,)
         self._n      = len(self._dpad)
@@ -50,7 +50,7 @@ class Recording:
     def get_chunk(self, start: int, length: int):
         valid_len = min(length, self._n - start)
 
-        ram    = torch.from_numpy(self._ram[start:start + valid_len].copy())
+        ram    = self._ram[start:start + valid_len]
         dpad   = self._dpad[start:start + valid_len]
         button = self._button[start:start + valid_len]
         text   = self._text[start:start + valid_len]
