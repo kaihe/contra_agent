@@ -95,7 +95,7 @@ class NESDataModule(pl.LightningDataModule):
 
         rng = random.Random(42)
         val_recs, train_recs = [], []
-        n_val_per_level = 2
+        n_val_per_level = 10
         for recs in by_level.values():
             shuffled = recs[:]
             rng.shuffle(shuffled)
@@ -132,15 +132,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_folder",    default=stage3["training_dataset"]["data_folder"])
     parser.add_argument("--checkpoint_dir", default=CHECKPOINT_DIR)
+    parser.add_argument("--exp_name",       default=None, help="Experiment name, used as checkpoint subdirectory")
     parser.add_argument("--fast_dev_run",   action="store_true")
     args = parser.parse_args()
 
     torch.set_float32_matmul_precision("high")
 
-    n_steps    = shared["n_seq_timesteps"]
-    batch_size = stage3["training_dataset"]["batch_size"]
-    lr         = stage3["optim"]["learning_rate"]
+    n_steps                = shared["n_seq_timesteps"]
+    batch_size             = stage3["training_dataset"]["batch_size"]
+    lr                     = stage3["optim"]["learning_rate"]
     max_epochs             = stage3.get("n_epochs", 5)
+    accumulate_grad_batches = stage3.get("accumulate_grad_batches", 1)
 
     n_text_tokens = shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0]
     dropout       = cfg.get("policy_model", {}).get("dropout", 0.0)
@@ -172,7 +174,7 @@ def main():
             raw.eval()
             try:
                 from pixel2play.play import run_episode
-                result = run_episode(raw, n_steps=self.n_episode_steps, temperature=1.0)
+                result = run_episode(raw, n_steps=self.n_episode_steps, temperature=0)
             finally:
                 raw.train()
 
@@ -188,8 +190,9 @@ def main():
                 f"enemies_hit={result['enemies_hit']:.0f} level_up={result['level_up']}"
             )
 
+    ckpt_dir = os.path.join(args.checkpoint_dir, args.exp_name) if args.exp_name else args.checkpoint_dir
     checkpoint_cb = ModelCheckpoint(
-        dirpath=args.checkpoint_dir,
+        dirpath=ckpt_dir,
         filename="last",
         save_top_k=1,
         enable_version_counter=False,
@@ -199,6 +202,7 @@ def main():
         accelerator="auto",
         devices="auto",
         max_epochs=max_epochs,
+        accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=1,
         precision="bf16-mixed",
         callbacks=[checkpoint_cb, GamePlayCallback()],

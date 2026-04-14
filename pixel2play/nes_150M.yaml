@@ -29,10 +29,6 @@ policy_model:
 
 
 stage3_finetune:
-  init:
-    random: false
-    stage3_model_path: /home/kaihe/code/open-p2p/checkpoints/150M/checkpoint-step=00500000.ckpt
-
   optim:
     learning_rate: 0.0001
     weight_decay: 0.0001
@@ -40,12 +36,12 @@ stage3_finetune:
     beta_2: 0.999
 
   n_epochs: 5
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 16
 
   training_dataset:
     batch_size: &stage3_batch_size 8
     local_prefix: dataset
-    data_folder: annotate/bc_data/contra/level1
+    data_folder: annotate/bc_data/level1
     always_labelled: true
     warn_on_starvation: false
     rand_augmentation:

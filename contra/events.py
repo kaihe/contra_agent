@@ -43,8 +43,7 @@ ADDR_XSCROLL        = 100    # >u2   horizontal scroll position (big-endian, 2 b
 ADDR_ENEMY_TYPE     = 0x528  # |u1   start of 16-slot enemy type array  ($0528)
 ADDR_ENEMY_HP       = 1400   # |u1   start of 16-slot enemy HP array    ($0578)
 ADDR_ENEMY_HP_COUNT = 16     #       number of enemy HP slots
-ENEMY_TYPE_FALLING_ROCK    = 0x13  # spawns endlessly from rock cave on L3
-ENEMY_TYPE_L6_BOSS         = 0x13  # Giant Boss Soldier (Gordea) on L6 — same value, different level
+ENEMY_TYPE_FALLING_ROCK    = 0x13  # spawns endlessly from rock cave on L3; same value is a real enemy on all other levels
 ADDR_INDOOR_CLEARED = 0x37   # |u1   INDOOR_SCREEN_CLEARED
 ADDR_WALL_CORE_LEFT = 0x86   # |u1   WALL_CORE_REMAINING
 ADDR_XSCROLL_HI     = 0x64   # |u1   LEVEL_SCREEN_NUMBER (indoor/vertical screen index)
@@ -58,6 +57,85 @@ ADDR_LEVEL_ROUTINE  = 0x2c   # |u1   LEVEL_ROUTINE_INDEX (from ram.asm $2c)
 
 WEAPON_NAMES = {0: "Regular", 1: "MachineGun", 2: "Flamethrower",
                 3: "Spread",  4: "Laser"}
+
+# Enemy type → human-readable name, sourced from docs/Enemy Glossary.md.
+# Types 0x00-0x0F are common across all levels.
+# Types 0x10+ are level-specific: keyed by (level_0indexed, type).
+ENEMY_TYPE_NAMES_COMMON = {
+    0x00: "Weapon Item",
+    0x01: "Bullet",
+    0x02: "Pill Box Sensor",
+    0x03: "Flying Capsule",
+    0x04: "Rotating Gun",
+    0x05: "Soldier",
+    0x06: "Sniper",
+    0x07: "Red Turret",
+    0x08: "Wall Cannon",
+    0x09: "Unused",
+    0x0A: "Wall Plating",
+    0x0B: "Mortar Shot",
+    0x0C: "Scuba Diver",
+    0x0D: "Unused",
+    0x0E: "Basquez",
+    0x0F: "Basquez Bullet",
+}
+
+ENEMY_TYPE_NAMES_BY_LEVEL = {
+    0: {  # L1 — Jungle
+        0x10: "Bomb Turret", 0x11: "Plated Door", 0x12: "Exploding Bridge",
+    },
+    1: {  # L2 — Indoor Base
+        0x10: "Boss Eye", 0x11: "Roller", 0x12: "Grenade", 0x13: "Wall Turret",
+        0x14: "Core", 0x15: "Indoor Soldier", 0x16: "Jumping Soldier",
+        0x17: "Grenade Launcher", 0x18: "Group of Four Soldiers",
+        0x19: "Indoor Soldier Generator", 0x1A: "Indoor Roller Generator",
+        0x1B: "Boss Eye Fire Ring Projectile", 0x1C: "Godomuga",
+        0x1D: "Gardegura", 0x1E: "Garth", 0x1F: "Rangel",
+        0x20: "Garth and Rangel Generator",
+    },
+    2: {  # L3 — Waterfall
+        0x10: "Floating Rock Platform", 0x11: "Moving Flame", 0x12: "Rock Cave",
+        0x13: "Falling Rock", 0x14: "Dragon", 0x15: "Dragon Tentacle Orb",
+    },
+    3: {  # L4 — Indoor Base (same enemy set as L2)
+        0x10: "Boss Eye", 0x11: "Roller", 0x12: "Grenade", 0x13: "Wall Turret",
+        0x14: "Core", 0x15: "Indoor Soldier", 0x16: "Jumping Soldier",
+        0x17: "Grenade Launcher", 0x18: "Group of Four Soldiers",
+        0x19: "Indoor Soldier Generator", 0x1A: "Indoor Roller Generator",
+        0x1B: "Boss Eye Fire Ring Projectile", 0x1C: "Godomuga",
+        0x1D: "Gardegura", 0x1E: "Garth", 0x1F: "Rangel",
+        0x20: "Garth and Rangel Generator",
+    },
+    4: {  # L5 — Snow Field
+        0x10: "Ice Grenade Generator", 0x11: "Ice Grenade", 0x12: "Tank",
+        0x13: "Ice Separator", 0x14: "Alien Carrier", 0x15: "Flying Saucer",
+        0x16: "Drop Bomb",
+    },
+    5: {  # L6 — Energy Zone
+        0x10: "Fire Beam", 0x11: "Fire Beam", 0x12: "Fire Beam",
+        0x13: "Giant Boss Soldier", 0x14: "Spiked Projectile",
+    },
+    6: {  # L7 — Hangar
+        0x10: "Claw", 0x11: "Rising Spiked Wall", 0x12: "Tall Spiked Wall",
+        0x13: "Mining Cart Generator", 0x14: "Mining Cart",
+        0x15: "Stationary Mining Cart", 0x16: "Armored Door",
+        0x17: "Mortar Launcher", 0x18: "Soldier Generator",
+    },
+    7: {  # L8 — Alien's Lair
+        0x10: "Emperor Demon Dragon God Java", 0x11: "Bundle",
+        0x12: "Wadder", 0x13: "Poisonous Insect Gel",
+        0x14: "Bugger", 0x15: "Eggron", 0x16: "Gomeramos King",
+    },
+}
+
+
+def enemy_type_name(etype: int, level_0indexed: int) -> str:
+    """Return a readable name for an enemy type given the current level (0-indexed)."""
+    if etype <= 0x0F:
+        return ENEMY_TYPE_NAMES_COMMON.get(etype, f"unknown(0x{etype:02x})")
+    return ENEMY_TYPE_NAMES_BY_LEVEL.get(level_0indexed, {}).get(
+        etype, f"unknown(0x{etype:02x})"
+    )
 
 
 def _xscroll(ram: np.ndarray) -> int:
@@ -79,39 +157,83 @@ def _weapon_type(ram: np.ndarray) -> int:
 
 # ── Individual event instances ────────────────────────────────────────────────
 
+def _enemy_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
+    """Sum HP decrements across all 16 slots, with level-aware handling of type 0x13.
+
+    Type 0x13 meaning by level (0-indexed):
+      L1 (0): no type-0x13 defined — skip
+      L2 (1): Wall Turret         — include
+      L3 (2): Falling Rock        — EXCLUDE (respawns endlessly from rock caves)
+      L4 (3): Wall Turret         — include
+      L5 (4): Ice Separator       — include
+      L6 (5): Giant Boss Soldier  — include (was formerly EV_L6_BOSS_HIT)
+      L7 (6): Mining Cart Gen.    — include
+      L8 (7): Poisonous Insect Gel — include
+    """
+    level = int(pre[ADDR_LEVEL])
+    total = 0.0
+    for slot in range(ADDR_ENEMY_HP_COUNT):
+        etype  = int(pre[ADDR_ENEMY_TYPE + slot])
+        pre_hp = int(pre[ADDR_ENEMY_HP   + slot])
+        cur_hp = int(cur[ADDR_ENEMY_HP   + slot])
+        if pre_hp >= 0xf0 or cur_hp >= 0xf0:
+            continue
+        if etype == 0x01:             # Bullet — projectile object, no real HP
+            continue
+        if etype == ENEMY_TYPE_FALLING_ROCK:
+            if level == 0:    # L1 — no type-0x13 enemies defined
+                continue
+            elif level == 1:  # L2 — Wall Turret: include
+                pass
+            elif level == 2:  # L3 — Falling Rock: exclude (endless respawn)
+                continue
+            elif level == 3:  # L4 — Wall Turret: include
+                pass
+            elif level == 4:  # L5 — Ice Separator: include
+                pass
+            elif level == 5:  # L6 — Giant Boss Soldier (Gordea): include
+                pass
+            elif level == 6:  # L7 — Mining Cart Generator: include
+                pass
+            elif level == 7:  # L8 — Poisonous Insect Gel: include
+                pass
+            else:
+                continue
+        delta = pre_hp - cur_hp
+        if delta > 0:
+            total += float(delta)
+    return total
+
+
+def _enemy_hit_detail(pre: np.ndarray, cur: np.ndarray) -> str:
+    level = int(pre[ADDR_LEVEL])
+    parts = []
+    for slot in range(ADDR_ENEMY_HP_COUNT):
+        etype  = int(pre[ADDR_ENEMY_TYPE + slot])
+        pre_hp = int(pre[ADDR_ENEMY_HP   + slot])
+        cur_hp = int(cur[ADDR_ENEMY_HP   + slot])
+        if pre_hp >= 0xf0 or cur_hp >= 0xf0:
+            continue
+        if etype == 0x01:
+            continue
+        if etype == ENEMY_TYPE_FALLING_ROCK and level == 2:
+            continue
+        delta = pre_hp - cur_hp
+        if delta > 0:
+            parts.append(f"{enemy_type_name(etype, level)} -{delta}HP")
+    return ", ".join(parts)
+
+
 EV_ENEMY_HIT = ContraEvent(
     tag="ENEMY_HIT",
-    desc="Sum of HP decrements for non-trivial enemies (pre-HP < 0xf0), excluding "
-         "falling rocks (type $13) which respawn endlessly from rock caves on L3.",
-    trigger_fn=lambda pre, cur: float(np.sum(
-        np.where(
-            (pre[ADDR_ENEMY_TYPE:ADDR_ENEMY_TYPE + ADDR_ENEMY_HP_COUNT] != ENEMY_TYPE_FALLING_ROCK) &
-            (pre[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT] < 0xf0) &
-            (cur[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT] < 0xf0),
-            (pre[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT].astype(int) -
-             cur[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT].astype(int)).clip(min=0),
-            0,
-        )
-    )),
+    desc="Sum of HP decrements across all active enemy slots. "
+         "Type 0x13 is excluded only on L3 (Falling Rock); on all other levels "
+         "it is a real enemy (Wall Turret, Giant Boss Soldier, etc.).",
+    trigger_fn=_enemy_hit_trigger,
+    detail_fn=_enemy_hit_detail,
     weight=1.0,
 )
 
-EV_L6_BOSS_HIT = ContraEvent(
-    tag="L6_BOSS_HIT",
-    desc="HP decrement on the Giant Boss Soldier (Gordea, type $13) on Level 6.",
-    trigger_fn=lambda pre, cur: float(np.sum(
-        np.where(
-            (pre[ADDR_ENEMY_TYPE:ADDR_ENEMY_TYPE + ADDR_ENEMY_HP_COUNT] == ENEMY_TYPE_L6_BOSS) &
-            (pre[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT] < 0xf0) &
-            (cur[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT] < 0xf0),
-            (pre[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT].astype(int) -
-             cur[ADDR_ENEMY_HP:ADDR_ENEMY_HP + ADDR_ENEMY_HP_COUNT].astype(int)).clip(min=0),
-            0,
-        )
-    )),
-    weight=1.0,
-    important=False,
-)
 
 EV_PUSH_FORWARD = ContraEvent(
     tag="PUSH_FORWARD",
@@ -348,7 +470,7 @@ EVENTS_BY_LEVEL = {
     2: LEVELS_PUSH_UP,       # L3  waterfall
     3: LEVELS_PUSH_INSIDE,  # L4  indoor
     4: LEVELS_PUSH_RIGHT,   # L5  snow
-    5: [*LEVELS_PUSH_RIGHT, EV_L6_BOSS_HIT],  # L6  factory (Giant Boss Soldier = type $13)
+    5: LEVELS_PUSH_RIGHT,                      # L6  factory (Giant Boss Soldier type $13 now in EV_ENEMY_HIT)
     6: LEVELS_PUSH_RIGHT,   # L7  side-scroll
     7: [*LEVELS_PUSH_RIGHT, EV_GAME_CLEAR],   # L8  final boss
 }
