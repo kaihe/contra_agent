@@ -395,6 +395,8 @@ def main():
                         help="level_up: stop on level-up (default); game_clear: stop on game clear")
     parser.add_argument("--max-actions", type=int, default=4000,
                         help="Abandon trace if committed actions exceed this limit (default: 4000)")
+    parser.add_argument("--no-verbose", action="store_true", default=False,
+                        help="Suppress per-step search output")
     args = parser.parse_args()
 
     _load_bigram(args.level)
@@ -449,6 +451,7 @@ def main():
         max_rewind=args.max_rewind,
         max_actions=args.max_actions,
         goal=args.goal,
+        verbose=not args.no_verbose,
         resume_from=args.resume,
         pool=pool,
     )

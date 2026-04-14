@@ -47,14 +47,21 @@ while true; do
     echo "────────────────────────────────────────"
 
     T_START=$(date +%s%N)
-    WORKERS=$(nproc)
-    ROLLOUTS=$((WORKERS * 16))
-    python "${SCRIPT_DIR}/mc_search.py" \
-        --level       ${LEVEL} \
-        --goal        level_up \
-        --workers     ${WORKERS} \
-        --rollouts    ${ROLLOUTS} \
-        --rollout-len 64
+    PROCS=4
+    WORKERS=32
+    ROLLOUTS=512
+    PIDS=()
+    for i in $(seq 1 ${PROCS}); do
+        python "${SCRIPT_DIR}/mc_search.py" \
+            --level       ${LEVEL} \
+            --goal        level_up \
+            --workers     ${WORKERS} \
+            --rollouts    ${ROLLOUTS} \
+            --rollout-len 48 \
+            --no-verbose &
+        PIDS+=($!)
+    done
+    wait "${PIDS[@]}"
     T_END=$(date +%s%N)
     ELAPSED=$(echo "scale=1; (${T_END} - ${T_START}) / 1000000000" | bc)
     TOTAL_TIME=$(echo "scale=1; ${TOTAL_TIME} + ${ELAPSED}" | bc)
