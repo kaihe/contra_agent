@@ -46,7 +46,7 @@ class NESPolicyModel(nn.Module):
 
     def encode(
         self,
-        frames: torch.Tensor,   # (B, T, 3, H, W) or (B, T, n_tokens, D)
+        ram: torch.Tensor,      # (B, T, 2048)
         dpad: torch.Tensor,     # (B, T)  int64
         button: torch.Tensor,   # (B, T)  int64
         text: torch.Tensor,     # (B, T, n_text, 768)
@@ -54,7 +54,7 @@ class NESPolicyModel(nn.Module):
         """Run the backbone transformer only. Returns action_out_tokens (B, T, D).
         action_out_tokens[t] is independent of dpad[t]/button[t] due to the causal mask,
         so dummy values at the current step are fine."""
-        return self.backbone._encode(frames, self._action_in(dpad, button), text)
+        return self.backbone._encode(ram, self._action_in(dpad, button), text)
 
     def decode(
         self,
@@ -69,7 +69,7 @@ class NESPolicyModel(nn.Module):
 
     def forward(
         self,
-        frames: torch.Tensor,   # (B, T, 3, H, W)
+        ram: torch.Tensor,      # (B, T, 2048)
         dpad: torch.Tensor,     # (B, T)  int64
         button: torch.Tensor,   # (B, T)  int64
         text: torch.Tensor,     # (B, T, 1, 768)
@@ -81,7 +81,7 @@ class NESPolicyModel(nn.Module):
         ], dim=2)
 
         # Backbone → (B, T, 2, D)
-        action_out = self.backbone(frames, action_in, text)
+        action_out = self.backbone(ram, action_in, text)
 
         # Project to logits
         dpad_logits   = self.dpad_head(action_out[:, :, 0, :])   # (B, T, N_DPAD)

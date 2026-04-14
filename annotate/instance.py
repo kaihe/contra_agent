@@ -6,15 +6,15 @@ BCDataSample  - universal data holder for one recorded episode.
 Recording / Training-data Sequence
 ===================================
 Each logical step = SKIP=3 NES frames (logical FPS=20).
-The FIRST NES frame of each skip group is captured as the model input,
-giving the model 2 extra NES frames (~33 ms at 60 fps) of inference time.
+The RAM snapshot is captured before each action is applied, giving
+the model the full current game state when predicting the next action.
 
   t=0
   ┌─────────────────────────────────────────────────────────────┐
   │  ENV                                                        │
   │  env.reset() + rewind_state()                               │
-  │  NES:  nes_0 recorded as img_features[0]                    │
-  │  model:  predicts action_0 from nes_0                       │
+  │  RAM:    ram[0] = initial RAM state                         │
+  │  model:  predicts action_0 from ram[0]                      │
   │  input:  action_0                                           │
   │  NES:    nes_1 → nes_2 → nes_3   (SKIP=3)                   │
   └─────────────────────────────────────────────────────────────┘
@@ -22,10 +22,8 @@ giving the model 2 extra NES frames (~33 ms at 60 fps) of inference time.
   t=1
   ┌─────────────────────────────────────────────────────────────┐
   │  ENV                                                        │
-  │  NES:    nes_1 recorded as img_features[1]                  │
-  │  model:  predicts action_1 from nes_1                       │
-  │          (this gives the model the duration of nes_2 and    │
-  │           nes_3 to compute the prediction in real-time)     │
+  │  RAM:    ram[1] = RAM after action_0                        │
+  │  model:  predicts action_1 from ram[1]                      │
   │  input:  action_1                                           │
   │  NES:    nes_4 → nes_5 → nes_6   (SKIP=3)                   │
   └─────────────────────────────────────────────────────────────┘
@@ -33,14 +31,14 @@ giving the model 2 extra NES frames (~33 ms at 60 fps) of inference time.
   ...  (pattern repeats for all N actions)
 
 Output file: bc_features.npz
-  img_features : float16  (N, 1, embed_dim)
-  dpad         : int8     (N,)    encoded dpad class 0..8
-  button       : int8     (N,)    encoded button class 0..3
-  text         : float16  (N, 1, 768)  Gemma embeddings; zeros if use_text=False
+  ram    : uint8   (N, 2048)          NES RAM snapshot per step
+  dpad   : int8    (N,)               encoded dpad class 0..8
+  button : int8    (N,)               encoded button class 0..3
+  text   : float16 (N, 1, 768)        Gemma embeddings; zeros if use_text=False
 
 Training chunk  (get_chunk(start, T=200)):
-  position t:  img_features[start+t], dpad[start+t], button[start+t], text[start+t]
-  model target: predict action_t from img[0..t] and action[0..t-1]  (causal)
+  position t:  ram[start+t], dpad[start+t], button[start+t], text[start+t]
+  model target: predict action_t from ram[0..t] and action[0..t-1]  (causal)
 """
 
 import os
@@ -89,40 +87,33 @@ class BCDataSample:
 
     def save_from_features(
         self,
-        img_features: np.ndarray,
+        ram: np.ndarray,
         dpad: np.ndarray,
         button: np.ndarray,
         extra: dict | None = None,
     ) -> str:
-        """Persist pre-computed img_features plus action labels. Returns output path."""
+        """Persist RAM snapshots plus action labels. Returns output path."""
         arrays = {} if extra is None else dict(extra)
-        arrays.update(img_features=img_features, dpad=dpad, button=button)
+        arrays.update(ram=ram, dpad=dpad, button=button)
         np.savez(self.features_path, **arrays)
         return self.features_path
 
     def compute_features(
         self,
         npz_path: str,
-        tokenizer,
         use_text: bool = False,
-        chunk_size: int = 32,
         device: str = "cuda",
     ) -> str:
-        """Step the emulator, encode frames in chunks of chunk_size, save features.
-
-        Peak frame memory = chunk_size frames (uint8) + chunk_size frames (float32)
-        regardless of recording length.
+        """Step the emulator, collect RAM snapshots per step, save features.
 
         Saves bc_features.npz with:
-            img_features : float16  (N, n_tokens, D)
-            dpad         : int8     (N,)
-            button       : int8     (N,)
-            text         : float16  (N, 1, 768)   only present if use_text=True
+            ram    : uint8   (N, 2048)
+            dpad   : int8    (N,)
+            button : int8    (N,)
+            text   : float16 (N, 1, 768)   only present if use_text=True
 
         Returns the path to the saved file.
         """
-        import torch
-        import torch.nn.functional as F
         import stable_retro as retro
         from contra.replay import rewind_state, step_env, GAME, SKIP
         from contra.events import EV_LEVELUP, EV_GAME_CLEAR
@@ -138,25 +129,72 @@ class BCDataSample:
 
         dpad   = np.empty(N, dtype=np.int8)
         button = np.empty(N, dtype=np.int8)
+        ram_buf = []                                               # list of (2048,) uint8
 
-        tokenizer = tokenizer.to(device).eval()
-        _mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-        _std  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
+        env = retro.make(
+            game=GAME,
+            state=retro.State.NONE,
+            use_restricted_actions=retro.Actions.ALL,
+            obs_type=retro.Observations.RAM,
+            render_mode=None,
+            inttype=retro.data.Integrations.CUSTOM_ONLY,
+        )
+        env.reset()
+        rewind_state(env, bytes(npz_data["initial_state"]))
 
-        def encode_chunk(frames: list) -> np.ndarray:
-            """Preprocess and encode a list of (H, W, 3) uint8 frames. Returns float16."""
-            arr = np.stack(frames).transpose(0, 3, 1, 2).astype(np.float32)
-            arr = (arr / 255.0 - _mean) / _std
-            t = torch.from_numpy(arr)
-            if t.shape[-2:] != (192, 192):
-                t = F.interpolate(t, (192, 192), mode="bilinear", align_corners=False)
-            with torch.no_grad():
-                feats = tokenizer(t.to(device).unsqueeze(1)).squeeze(1)  # (B, n_tokens, D)
-            return feats.cpu().float().numpy().astype(np.float16)
+        ram_buf.append(env.unwrapped.get_ram().copy())             # ram[0]: initial state
+        leveled_up   = False
+        game_cleared = False
+        raw_frames   = None
 
-        # --- Text annotation (requires full video for Gemini) ---
+        if use_text:
+            raw_frames = [env.em.get_screen().copy()]              # for video annotation
+
+        for i, act in enumerate(raw_actions):
+            act_arr   = np.asarray(act, dtype=np.uint8)
+            pre_ram   = env.unwrapped.get_ram().copy()
+            cur_state = env.em.get_state()
+
+            # Apply original action
+            for j in range(SKIP):
+                obs, _, _, _, _ = env.step(act_arr.copy())
+                if use_text and j == 0:
+                    raw_frames.append(obs.copy())
+            ram_orig  = env.unwrapped.get_ram().copy()
+            next_orig = env.em.get_state()
+
+            # Test NOOP from same state
+            rewind_state(env, cur_state)
+            step_env(env, _NOOP)
+            ram_noop = env.unwrapped.get_ram().copy()
+
+            # If action had no effect, label as no-op (env stays in noop state)
+            # If effective, rewind to original progression
+            if np.array_equal(ram_orig, ram_noop):
+                dpad[i], button[i] = encode(_nes_keys(_NOOP))
+            else:
+                dpad[i], button[i] = encode(_nes_keys(act_arr))
+                rewind_state(env, next_orig)
+
+            curr_ram = env.unwrapped.get_ram().copy()
+            ram_buf.append(curr_ram)                               # ram[i+1]: after action i
+
+            if EV_LEVELUP.trigger(pre_ram, curr_ram):
+                leveled_up = True
+            if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):
+                game_cleared = True
+
+        env.close()
+
+        outcome = "game_clear" if game_cleared else "level_up" if leveled_up else "lose"
+        assert outcome != "lose", \
+            f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
+
+        # ram_buf has N+1 entries; drop the final one so ram[i] aligns with action[i]
+        ram = np.stack(ram_buf[:-1], axis=0)                      # (N, 2048) uint8
+
+        # --- Text annotation ---
         extra = {}
-        raw_frames_for_text = None
         if use_text:
             from contra.replay import save_video
             from annotate.get_text_annotation import annotate_video, _get_gemma_st
@@ -165,15 +203,10 @@ class BCDataSample:
                 raise ValueError("Set GEMINI_API_KEY environment variable")
             fps = int(npz_data.get("fps", 20))
 
-            result = replay_actions(npz_path, want_video=True, verbose=False)
-            assert result["result"] != "lose", \
-                f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
-            raw_frames_for_text = result["video"]                  # (N+1, H, W, 3) uint8
-
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
                 video_path = f.name
             try:
-                save_video(raw_frames_for_text, video_path)
+                save_video(np.stack(raw_frames), video_path)
                 _, macros = annotate_video(video_path, api_key, fps)
             finally:
                 os.unlink(video_path)
@@ -187,82 +220,7 @@ class BCDataSample:
                 text[start:end] = vec.reshape(1, 768).astype(np.float16)
             extra["text"] = text
 
-        # --- Stream replay + chunk encode ---
-        all_feats = []
-
-        if raw_frames_for_text is not None:
-            # Already have frames from the use_text replay; encode them in chunks
-            for i in range(0, len(raw_frames_for_text), chunk_size):
-                chunk = list(raw_frames_for_text[i:i + chunk_size])
-                all_feats.append(encode_chunk(chunk))
-            del raw_frames_for_text
-        else:
-            # Step emulator directly; never hold more than chunk_size frames at once
-            env = retro.make(
-                game=GAME,
-                state=retro.State.NONE,
-                use_restricted_actions=retro.Actions.ALL,
-                obs_type=retro.Observations.IMAGE,
-                render_mode=None,
-                inttype=retro.data.Integrations.CUSTOM_ONLY,
-            )
-            env.reset()
-            rewind_state(env, bytes(npz_data["initial_state"]))
-
-            frame_buf    = [env.em.get_screen().copy()]            # nes_0
-            leveled_up   = False
-            game_cleared = False
-
-            for i, act in enumerate(raw_actions):
-                act_arr   = np.asarray(act, dtype=np.uint8)
-                pre_ram   = env.unwrapped.get_ram().copy()
-                cur_state = env.em.get_state()
-
-                # Apply original action, capture first obs frame
-                obs_frame = None
-                for j in range(SKIP):
-                    obs, _, _, _, _ = env.step(act_arr.copy())
-                    if j == 0:
-                        obs_frame = obs.copy()
-                ram_orig  = env.unwrapped.get_ram().copy()
-                next_orig = env.em.get_state()
-
-                # Test NOOP from same state
-                rewind_state(env, cur_state)
-                step_env(env, _NOOP)
-                ram_noop = env.unwrapped.get_ram().copy()
-
-                # If action had no effect, label it as no-op (env stays in noop state)
-                # If effective, rewind to original progression
-                if np.array_equal(ram_orig, ram_noop):
-                    dpad[i], button[i] = encode(_nes_keys(_NOOP))
-                else:
-                    dpad[i], button[i] = encode(_nes_keys(act_arr))
-                    rewind_state(env, next_orig)
-
-                curr_ram = env.unwrapped.get_ram()
-                if EV_LEVELUP.trigger(pre_ram, curr_ram):
-                    leveled_up = True
-                if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):
-                    game_cleared = True
-
-                frame_buf.append(obs_frame)
-                if len(frame_buf) >= chunk_size:
-                    all_feats.append(encode_chunk(frame_buf))
-                    frame_buf = []
-
-            env.close()
-
-            outcome = "game_clear" if game_cleared else "level_up" if leveled_up else "lose"
-            assert outcome != "lose", \
-                f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
-
-            if frame_buf:
-                all_feats.append(encode_chunk(frame_buf))
-
-        img_features = np.concatenate(all_feats, axis=0)[:-1]     # drop final nes_N frame
-
-        return self.save_from_features(img_features, dpad, button, extra)
+        return self.save_from_features(ram, dpad, button, extra)
 
     @property
     def has_features(self) -> bool:

@@ -17,7 +17,7 @@ from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_policy import NESPolicyModel
 
 CHECKPOINT_DIR = "tmp/checkpoints/nes_policy"
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "nes_150M.yaml")
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "nes_10M.yaml")
 
 
 def _load_config(path: str) -> dict:
@@ -30,12 +30,13 @@ def _load_config(path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 class NESLightningModule(pl.LightningModule):
-    def __init__(self, cfg: BackboneConfig, lr: float = 1e-4, dropout: float = 0.0):
+    def __init__(self, cfg: BackboneConfig, lr: float = 1e-4, dropout: float = 0.0, weight_decay: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=["cfg"])
         cfg.dropout = dropout
         self.model = NESPolicyModel(cfg)
         self.lr = lr
+        self.weight_decay = weight_decay
 
     def on_fit_start(self):
         # Block masks are built on CPU at __init__ time; rebuild on the actual device.
@@ -52,8 +53,8 @@ class NESLightningModule(pl.LightningModule):
 
 
     def _step(self, batch):
-        frames, dpad, button, text, valid_mask = batch
-        dpad_logits, button_logits = self.model(frames, dpad, button, text)
+        ram, dpad, button, text, valid_mask = batch
+        dpad_logits, button_logits = self.model(ram, dpad, button, text)
         return self.model.loss(dpad_logits, button_logits, dpad, button, valid_mask)
 
     def training_step(self, batch, _):
@@ -66,7 +67,19 @@ class NESLightningModule(pl.LightningModule):
         self.log("val/loss", loss, prog_bar=True)
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=1e-4)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        total_epochs  = self.trainer.max_epochs
+        warmup_epochs = max(1, total_epochs // 20)   # 5% warmup
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+        )
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=total_epochs - warmup_epochs, eta_min=self.lr * 0.05
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
+        )
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +138,17 @@ class NESDataModule(pl.LightningDataModule):
 def main():
     logging.basicConfig(level=logging.INFO, force=True)
 
-    cfg = _load_config(CONFIG_FILE)
-    shared   = cfg["shared"]
-    stage3   = cfg["stage3_finetune"]
+    # Pre-parse --config so all other defaults can come from the chosen YAML.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=CONFIG_FILE)
+    pre_args, _ = pre.parse_known_args()
+
+    cfg    = _load_config(pre_args.config)
+    shared = cfg["shared"]
+    stage3 = cfg["stage3_finetune"]
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config",         default=pre_args.config, help="Path to YAML config file")
     parser.add_argument("--data_folder",    default=stage3["training_dataset"]["data_folder"])
     parser.add_argument("--checkpoint_dir", default=CHECKPOINT_DIR)
     parser.add_argument("--exp_name",       default=None, help="Experiment name, used as checkpoint subdirectory")
@@ -145,9 +164,24 @@ def main():
     accumulate_grad_batches = stage3.get("accumulate_grad_batches", 1)
 
     n_text_tokens = shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0]
-    dropout       = cfg.get("policy_model", {}).get("dropout", 0.0)
 
-    backbone_cfg = BackboneConfig(n_steps=n_steps, n_text_tokens=n_text_tokens, dropout=dropout)
+    pm      = cfg.get("policy_model", {})
+    dec     = pm.get("action_decoder", {})
+    dropout = pm.get("dropout", 0.0)
+    backbone_cfg = BackboneConfig(
+        n_steps=n_steps,
+        n_text_tokens=n_text_tokens,
+        dim=pm.get("transformer_dim", 1024),
+        n_layers=pm.get("n_transformer_layers", 10),
+        n_q_heads=pm.get("n_q_head", 16),
+        n_kv_heads=pm.get("n_kv_head", 16),
+        n_thinking_tokens=pm.get("n_thinking_tokens", 1),
+        mask_block_size=pm.get("mask_block_size", 128),
+        attention_history_len=pm.get("attention_history_len", None),
+        dropout=pm.get("dropout", 0.0),
+        dec_n_layers=dec.get("n_layers", 3),
+        dec_n_heads=dec.get("n_heads", 8),
+    )
 
     datamodule = NESDataModule(
         data_root=args.data_folder,
@@ -156,7 +190,8 @@ def main():
         n_text_tokens=n_text_tokens,
     )
 
-    module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout)
+    weight_decay = stage3["optim"]["weight_decay"]
+    module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout, weight_decay=weight_decay)
     module.model = torch.compile(module.model)
 
     from lightning.pytorch.callbacks import ModelCheckpoint

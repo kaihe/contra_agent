@@ -24,7 +24,7 @@ from torch.nn.attention import flex_attention as fa
 
 from pixel2play.model.attention import Transformer
 from pixel2play.model.decoder import ActionDecoder
-from pixel2play.model.tokenizer import ConvTokenizer
+from pixel2play.model.tokenizer import RAMTokenizer
 
 
 # ---------------------------------------------------------------------------
@@ -42,9 +42,8 @@ class BackboneConfig:
     n_steps: int = 200
     n_thinking_tokens: int = 1
     n_action_tokens: int = 2        # NES: dpad + buttons
-    # Image
-    frame_height: int = 192
-    frame_width: int = 192
+    # RAM
+    ram_size: int = 2048
     # Text
     n_text_tokens: int = 1
     text_embed_dim: int = 768
@@ -129,14 +128,9 @@ class PolicyCausalTransformer(nn.Module):
         self.cfg = cfg
         D = cfg.dim
 
-        # Image tokenizer
-        self.image_tokenizer = ConvTokenizer(
-            frame_height=cfg.frame_height,
-            frame_width=cfg.frame_width,
-            embed_dim=D,
-            n_tokens=1,
-        )
-        self.n_img = self.image_tokenizer.n_img_tokens()
+        # RAM tokenizer
+        self.ram_tokenizer = RAMTokenizer(embed_dim=D)
+        self.n_img = self.ram_tokenizer.n_img_tokens()
 
         # Sequence geometry
         self.one_step = self.n_img + cfg.n_text_tokens + cfg.n_thinking_tokens + 1 + cfg.n_action_tokens
@@ -245,17 +239,14 @@ class PolicyCausalTransformer(nn.Module):
 
     def _encode(
         self,
-        frames: torch.Tensor,
+        ram: torch.Tensor,
         action_embeddings_in: torch.Tensor,
         text_tokens_embed: torch.Tensor,
     ) -> torch.Tensor:
-        """Run image/text encoding + backbone transformer. Returns action_out_tokens (B, T, D)."""
-        B, T = frames.shape[:2]
+        """Run RAM encoding + backbone transformer. Returns action_out_tokens (B, T, D)."""
+        B, T = ram.shape[:2]
 
-        if frames.ndim == 4:
-            img_tokens = frames.to(dtype=next(self.transformer.parameters()).dtype)
-        else:
-            img_tokens = self.image_tokenizer(frames)
+        img_tokens = self.ram_tokenizer(ram)  # (B, T, 1, D)
 
         text = self.text_proj(text_tokens_embed)
         if self.cfg.n_text_tokens > 0:
@@ -273,10 +264,10 @@ class PolicyCausalTransformer(nn.Module):
 
     def forward(
         self,
-        frames: torch.Tensor,                    # (B, T, C, H, W)
+        ram: torch.Tensor,                       # (B, T, 2048)
         action_embeddings_in: torch.Tensor,      # (B, T, N, D)
         text_tokens_embed: torch.Tensor,         # (B, T, n_text, text_dim)
     ) -> torch.Tensor:
         """Returns action_out: (B, T, N, D)."""
-        action_out_tokens = self._encode(frames, action_embeddings_in, text_tokens_embed)
+        action_out_tokens = self._encode(ram, action_embeddings_in, text_tokens_embed)
         return self.action_decoder(action_out_tokens, action_embeddings_in)

@@ -1,6 +1,6 @@
 shared:
-  output_path: ${USER}/policy_model/nes_150M
-  n_seq_timesteps: 200
+  output_path: ${USER}/policy_model/nes_10M
+  n_seq_timesteps: 128
   frame_height: 192
   frame_width: 192
   text_tokenizer_config:
@@ -13,25 +13,28 @@ shared:
       num_tokens: 1
 
 # Policy Model Configuration
+# dim=288  layers=7  heads=8  dec_layers=2  => 9.87M parameters
 policy_model:
-  n_transformer_layers: 10
-  n_q_head: 16
-  n_kv_head: 16
+  n_transformer_layers: 7
+  n_q_head: 8
+  n_kv_head: 8
   n_thinking_tokens: 1
-  transformer_dim: &transformer_dim 1024
+  transformer_dim: &transformer_dim 288
   mask_block_size: 128
-  attention_history_len: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
+  attention_history_len: [128, 128, 128, 128, 128, 128, 128]
   n_kv_sink_tokens: 0
   model_type: "dense"
-  dropout: 0.1
+  dropout: 0.15
   action_decoder:
     embed_dim: *transformer_dim
+    n_layers: 2
+    n_heads: 4
 
 
 stage3_finetune:
   optim:
-    learning_rate: 0.0001
-    weight_decay: 0.0001
+    learning_rate: 0.0003
+    weight_decay: 0.01
     beta_1: 0.9
     beta_2: 0.999
 
@@ -39,7 +42,7 @@ stage3_finetune:
   accumulate_grad_batches: 16
 
   training_dataset:
-    batch_size: &stage3_batch_size 8
+    batch_size: &stage3_batch_size 32
     local_prefix: dataset
     data_folder: annotate/bc_data/level1_ram
     always_labelled: true
@@ -76,4 +79,4 @@ stage3_finetune:
 wandb:
   enabled: false
   project: "policy_model"
-  exp_name: "contra-nes-dev"
+  exp_name: "contra-nes-10m"

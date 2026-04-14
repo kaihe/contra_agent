@@ -26,7 +26,6 @@ import contra  # registers custom ROM integration
 import numpy as np
 import stable_retro as retro
 import torch
-import torch.nn.functional as F
 
 from contra.events import EV_PLAYER_DIE, ADDR_XSCROLL, EV_ENEMY_HIT, EV_LEVELUP
 from contra.inputs import DPAD_TABLE, BUTTON_TABLE
@@ -39,13 +38,8 @@ from pixel2play.train import NESLightningModule
 GAME              = "Contra-Nes"
 SPREAD_STATES_DIR = os.path.join(os.path.dirname(__file__), "../contra/spread_gun_states")
 
-N_STEPS   = 200       # model context window
-FRAME_H   = FRAME_W = 192
-EMBED_DIM = 1024
-EMU_SKIP  = 3         # env steps per agent step (20 Hz agent @ 60 Hz NES)
-
-_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-_STD  = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+RAM_SIZE = 2048  # NES RAM bytes
+EMU_SKIP = 3     # env steps per agent step (20 Hz agent @ 60 Hz NES)
 
 _DPAD_NES   = np.array(DPAD_TABLE,   dtype=np.int8)   # (9, 9)
 _BUTTON_NES = np.array(BUTTON_TABLE, dtype=np.int8)   # (4, 9)
@@ -67,9 +61,31 @@ def _xscroll(ram: np.ndarray) -> int:
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
-def load_model(checkpoint_path: str, device: torch.device) -> NESPolicyModel:
-    cfg = BackboneConfig(n_steps=N_STEPS, n_text_tokens=0, dropout=0.0)
-    module = NESLightningModule(cfg, lr=1e-4)
+def load_model(checkpoint_path: str, device: torch.device, config_path: Optional[str] = None) -> NESPolicyModel:
+    if config_path is not None:
+        import yaml
+        from pixel2play.train import _load_config
+        raw_cfg = _load_config(config_path)
+        shared  = raw_cfg["shared"]
+        pm      = raw_cfg.get("policy_model", {})
+        dec     = pm.get("action_decoder", {})
+        backbone_cfg = BackboneConfig(
+            n_steps=shared["n_seq_timesteps"],
+            n_text_tokens=shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0],
+            dim=pm.get("transformer_dim", 1024),
+            n_layers=pm.get("n_transformer_layers", 10),
+            n_q_heads=pm.get("n_q_head", 16),
+            n_kv_heads=pm.get("n_kv_head", 16),
+            n_thinking_tokens=pm.get("n_thinking_tokens", 1),
+            mask_block_size=pm.get("mask_block_size", 128),
+            attention_history_len=pm.get("attention_history_len", None),
+            dropout=0.0,
+            dec_n_layers=dec.get("n_layers", 3),
+            dec_n_heads=dec.get("n_heads", 8),
+        )
+    else:
+        backbone_cfg = BackboneConfig(n_steps=200, n_text_tokens=0, dropout=0.0)
+    module = NESLightningModule(backbone_cfg, lr=1e-4)
 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = ckpt["state_dict"]
@@ -110,18 +126,6 @@ def make_env(level: str):
     return env, obs, initial_state
 
 
-# ── Frame tokenisation ────────────────────────────────────────────────────────
-
-def tokenize(obs: np.ndarray, tokenizer: torch.nn.Module, device: torch.device) -> torch.Tensor:
-    """(H, W, 3) uint8 → (1, EMBED_DIM) float32 on CPU."""
-    frame = torch.from_numpy(obs).permute(2, 0, 1).float() / 255.0   # (3, H, W)
-    frame = (frame.unsqueeze(0) - _MEAN) / _STD                       # (1, 3, H, W)
-    frame = F.interpolate(frame, size=(FRAME_H, FRAME_W), mode="bilinear", align_corners=False)
-    with torch.no_grad():
-        feat = tokenizer(frame.unsqueeze(1).to(device))                # (1, 1, 1, D)
-    return feat[0, 0].cpu().float()                                     # (1, D)
-
-
 # ── Core episode runner ───────────────────────────────────────────────────────
 
 def run_episode(
@@ -145,13 +149,15 @@ def run_episode(
     if device is None:
         device = next(model.parameters()).device
 
-    tokenizer = model.backbone.image_tokenizer
-    env, obs, initial_state = make_env(level)
+    ctx_len  = model.backbone.cfg.n_steps
+    n_text   = model.backbone.cfg.n_text_tokens
 
-    img_buf    = torch.zeros(N_STEPS, 1, EMBED_DIM)
-    dpad_buf   = torch.zeros(N_STEPS, dtype=torch.long)
-    button_buf = torch.zeros(N_STEPS, dtype=torch.long)
-    text_buf   = torch.zeros(N_STEPS, 0, 768)
+    env, _, initial_state = make_env(level)
+
+    ram_buf    = torch.zeros(ctx_len, RAM_SIZE, dtype=torch.uint8)
+    dpad_buf   = torch.zeros(ctx_len, dtype=torch.long)
+    button_buf = torch.zeros(ctx_len, dtype=torch.long)
+    text_buf   = torch.zeros(ctx_len, n_text, 768)
     buf_len    = 0
 
     recorded_actions: list[np.ndarray] = []
@@ -160,28 +166,28 @@ def run_episode(
     level_up     = False
 
     for step in range(n_steps):
-        feat = tokenize(obs, tokenizer, device)
+        ram = torch.from_numpy(env.unwrapped.get_ram().copy())   # (2048,) uint8
 
-        if buf_len < N_STEPS:
-            img_buf[buf_len] = feat
+        if buf_len < ctx_len:
+            ram_buf[buf_len] = ram
             pos     = buf_len
             buf_len += 1
         else:
-            img_buf    = torch.roll(img_buf,    -1, dims=0)
+            ram_buf    = torch.roll(ram_buf,    -1, dims=0)
             dpad_buf   = torch.roll(dpad_buf,   -1, dims=0)
             button_buf = torch.roll(button_buf, -1, dims=0)
-            img_buf[-1]    = feat
+            ram_buf[-1]    = ram
             dpad_buf[-1]   = 0
             button_buf[-1] = 0
-            pos = N_STEPS - 1
+            pos = ctx_len - 1
 
-        frames_d = img_buf.unsqueeze(0).to(device)
-        text_d   = text_buf.unsqueeze(0).to(device)
+        ram_d  = ram_buf.unsqueeze(0).to(device)                 # (1, ctx_len, 2048)
+        text_d = text_buf.unsqueeze(0).to(device)
 
         # Backbone: one pass
         with torch.no_grad():
             action_out_tokens = model.encode(
-                frames_d,
+                ram_d,
                 dpad_buf.unsqueeze(0).to(device),
                 button_buf.unsqueeze(0).to(device),
                 text_d,
@@ -211,10 +217,9 @@ def run_episode(
         recorded_actions.append(action)
 
         pre_ram = env.unwrapped.get_ram().copy()
+        terminated = truncated = False
         for i in range(EMU_SKIP):
-            frame, _, terminated, truncated, _ = env.step(action.copy())
-            if i == 0:
-                obs = frame
+            _, _, terminated, truncated, _ = env.step(action.copy())
             if terminated or truncated:
                 break
         curr_ram = env.unwrapped.get_ram()
@@ -249,6 +254,7 @@ def run_episode(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--config",      default=None,  help="YAML config used to train the checkpoint")
     parser.add_argument("--level",       default="Level1")
     parser.add_argument("--n_steps",     type=int,   default=2000)
     parser.add_argument("--out",         default="tmp/agent_run.npz")
@@ -259,7 +265,7 @@ def main():
 
     device = torch.device(args.device)
     print(f"Loading checkpoint: {args.checkpoint}  device={device}")
-    model = load_model(args.checkpoint, device)
+    model = load_model(args.checkpoint, device, config_path=args.config)
 
     result = run_episode(model, level=args.level, n_steps=args.n_steps,
                          temperature=args.temperature, device=device)

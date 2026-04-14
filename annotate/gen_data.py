@@ -4,18 +4,13 @@ import os
 import sys
 
 import numpy as np
-import torch
 
 from annotate import BCDataSample
 
 
 def _worker(args: tuple) -> tuple[str, str | None]:
     """Process one recording in a subprocess. Returns (npz_path, error_msg or None)."""
-    npz_path, use_text, chunk_size, device, out_dir = args
-
-    from pixel2play.model.tokenizer import ConvTokenizer
-    tokenizer = ConvTokenizer(frame_height=192, frame_width=192, embed_dim=1024, n_tokens=1)
-    tokenizer.eval()
+    npz_path, use_text, out_dir = args
 
     data   = np.load(npz_path, allow_pickle=True)
     game   = str(data["game"]) if "game" in data else "Contra-Nes"
@@ -25,8 +20,7 @@ def _worker(args: tuple) -> tuple[str, str | None]:
         return npz_path, None
 
     try:
-        sample.compute_features(npz_path, tokenizer, use_text=use_text,
-                                chunk_size=chunk_size, device=device)
+        sample.compute_features(npz_path, use_text=use_text)
         return npz_path, None
     except AssertionError as e:
         return npz_path, str(e)
@@ -41,15 +35,12 @@ def main():
                         help="Run Gemini annotation and embed text with Gemma")
     parser.add_argument("--workers", type=int, default=8,
                         help="Number of parallel worker processes (default: 8)")
-    parser.add_argument("--chunk-size", type=int, default=32,
-                        help="Frames per encoder pass per worker (default: 32)")
     parser.add_argument("--output-dir", default=None,
                         help="Directory to write output .npz files (default: annotate/bc_data/<game>)")
     args = parser.parse_args()
 
     use_text = args.use_text
     out_dir  = args.output_dir
-    device   = "cuda" if torch.cuda.is_available() else "cpu"
 
     npz_paths = []
     for src in args.source:
@@ -73,7 +64,7 @@ def main():
     from tqdm import tqdm
 
     worker_args = [
-        (p, use_text, args.chunk_size, device, out_dir)
+        (p, use_text, out_dir)
         for p in npz_paths
     ]
 

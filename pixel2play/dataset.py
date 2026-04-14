@@ -2,20 +2,20 @@
 NES dataset: loads bc_features.npz recordings and returns fixed-length chunks.
 
 Each recording contains bc_features.npz with:
-  img_features : float16  (N+1, 1, embed_dim)   precomputed frame tokens
-  dpad         : int8     (N,)                   dpad class 0..8
-  button       : int8     (N,)                   button class 0..3
-  text         : float16  (N, 1, 768)            Gemma embedding (zeros if absent)
+  ram    : uint8   (N, 2048)          NES RAM snapshot per step
+  dpad   : int8    (N,)               dpad class 0..8
+  button : int8    (N,)               button class 0..3
+  text   : float16 (N, 1, 768)        Gemma embedding (zeros if absent)
 
 Chunks are non-overlapping with stride=T. The final tail chunk is padded with
-the last frame/action repeated, and a valid_mask marks the real frames.
+the last RAM/action repeated, and a valid_mask marks the real frames.
 
 A chunk of T consecutive steps yields:
-  img        : (T, 1, embed_dim)  float32
-  dpad       : (T,)               int64,  0..8
-  button     : (T,)               int64,  0..3
-  text       : (T, 1, 768)        float32
-  valid_mask : (T,)               bool    -- False for padding steps
+  ram        : (T, 2048)  uint8
+  dpad       : (T,)       int64,  0..8
+  button     : (T,)       int64,  0..3
+  text       : (T, 1, 768) float32
+  valid_mask : (T,)       bool    -- False for padding steps
 """
 
 import logging
@@ -34,7 +34,7 @@ class Recording:
     def __init__(self, features_path: str, n_text_tokens: int = 1):
         self.path = features_path
         data = np.load(features_path, mmap_mode="r")
-        self._img    = data["img_features"]                                  # (N+1, 1, D) float16
+        self._ram    = data["ram"]                                           # (N, 2048) uint8
         self._dpad   = torch.from_numpy(data["dpad"].astype(np.int64))      # (N,)
         self._button = torch.from_numpy(data["button"].astype(np.int64))    # (N,)
         self._n      = len(self._dpad)
@@ -50,7 +50,7 @@ class Recording:
     def get_chunk(self, start: int, length: int):
         valid_len = min(length, self._n - start)
 
-        img    = torch.from_numpy(self._img[start:start + valid_len].astype(np.float32))
+        ram    = torch.from_numpy(self._ram[start:start + valid_len].copy())
         dpad   = self._dpad[start:start + valid_len]
         button = self._button[start:start + valid_len]
         text   = self._text[start:start + valid_len]
@@ -60,12 +60,12 @@ class Recording:
 
         if valid_len < length:
             pad = length - valid_len
-            img    = torch.cat([img,    img[-1:].expand(pad, -1, -1)],              dim=0)
-            dpad   = torch.cat([dpad,   torch.zeros(pad, dtype=dpad.dtype)],        dim=0)
-            button = torch.cat([button, torch.zeros(pad, dtype=button.dtype)],      dim=0)
-            text   = torch.cat([text,   text[-1:].expand(pad, -1, -1)],             dim=0)
+            ram    = torch.cat([ram,    ram[-1:].expand(pad, -1)],              dim=0)
+            dpad   = torch.cat([dpad,   torch.zeros(pad, dtype=dpad.dtype)],    dim=0)
+            button = torch.cat([button, torch.zeros(pad, dtype=button.dtype)],  dim=0)
+            text   = torch.cat([text,   text[-1:].expand(pad, -1, -1)],         dim=0)
 
-        return img, dpad, button, text, valid_mask
+        return ram, dpad, button, text, valid_mask
 
 
 class NESDataset(Dataset):
