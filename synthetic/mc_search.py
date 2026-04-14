@@ -418,28 +418,31 @@ def main():
     if use_spread:
         env.load_state(f"spread_gun_state/{state_label}",
                        retro.data.Integrations.CUSTOM_ONLY)
-        print(f"  Spread state: spread_gun_state/{state_label}.state")
+        if not args.no_verbose:
+            print(f"  Spread state: spread_gun_state/{state_label}.state")
     env.reset()
     initial_state_for_npz = env.em.get_state()
     initial_emu_state      = env.em.get_state()
 
-    print("=" * 70)
-    print("Playfun — Monte Carlo Search with Backtracking")
-    print("=" * 70)
-    print(f"  Game:           {GAME}")
-    print(f"  Level:          {args.level}  ({state_label})")
-    print(f"  Skip:           {SKIP}")
-    print(f"  Rollouts/Step:  {args.rollouts}")
-    print(f"  Rollout Length: {args.rollout_len} actions ({args.rollout_len * SKIP} frames)")
-    print(f"  Patience:       {args.patience} stale commits before rewind")
-    print(f"  Max Rewind:     {args.max_rewind} steps")
-    print(f"  Workers:        {args.workers if args.workers > 1 else 1}")
-    print(f"  Goal:           {args.goal}")
-    print(f"  Max Actions:    {args.max_actions}")
-    print(f"  Time Budget:    {args.max_time}s")
-    if args.resume:
-        print(f"  Resume:         {args.resume}")
-    print("=" * 70)
+    verbose = not args.no_verbose
+    if verbose:
+        print("=" * 70)
+        print("Playfun — Monte Carlo Search with Backtracking")
+        print("=" * 70)
+        print(f"  Game:           {GAME}")
+        print(f"  Level:          {args.level}  ({state_label})")
+        print(f"  Skip:           {SKIP}")
+        print(f"  Rollouts/Step:  {args.rollouts}")
+        print(f"  Rollout Length: {args.rollout_len} actions ({args.rollout_len * SKIP} frames)")
+        print(f"  Patience:       {args.patience} stale commits before rewind")
+        print(f"  Max Rewind:     {args.max_rewind} steps")
+        print(f"  Workers:        {args.workers if args.workers > 1 else 1}")
+        print(f"  Goal:           {args.goal}")
+        print(f"  Max Actions:    {args.max_actions}")
+        print(f"  Time Budget:    {args.max_time}s")
+        if args.resume:
+            print(f"  Resume:         {args.resume}")
+        print("=" * 70)
 
     actions, final_state, rewards = search_and_play(
         env, initial_emu_state,
@@ -451,17 +454,18 @@ def main():
         max_rewind=args.max_rewind,
         max_actions=args.max_actions,
         goal=args.goal,
-        verbose=not args.no_verbose,
+        verbose=verbose,
         resume_from=args.resume,
         pool=pool,
     )
 
-    print()
-    print("=" * 70)
-    print("RESULT")
-    print("=" * 70)
-    print(f"  Actions: {len(actions)}")
-    print(f"  Reward:  {rewards[-1] if rewards else 0.0:.2f}")
+    if verbose:
+        print()
+        print("=" * 70)
+        print("RESULT")
+        print("=" * 70)
+        print(f"  Actions: {len(actions)}")
+        print(f"  Reward:  {rewards[-1] if rewards else 0.0:.2f}")
 
     outcome    = "win" if final_state.done else "lose"
     date_str   = time.strftime("%Y%m%d%H%M")
