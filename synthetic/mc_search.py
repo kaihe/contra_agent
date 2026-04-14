@@ -137,7 +137,7 @@ def _load_bigram(start_level: int) -> None:
             if prior.shape == (NUM_ACTIONS, NUM_ACTIONS):
                 _ACTION_PRIORS[level] = prior
                 _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior
-                print(f"Loaded action bigram prior for {key}")
+                # print(f"Loaded action bigram prior for {key}")
             else:
                 print(f"WARNING: bigram shape {prior.shape} != ({NUM_ACTIONS},{NUM_ACTIONS}) for {key}, using uniform.")
         else:
@@ -173,7 +173,7 @@ def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1)
 
 def search_and_play(env, initial_emu_state: bytes,
                     rollouts: int, rollout_len: int,
-                    patience: int, max_time: int,
+                    max_time: int,
                     level: int = 1,
                     max_rewind: int = 30,
                     max_actions: int = 4000,
@@ -206,14 +206,14 @@ def search_and_play(env, initial_emu_state: bytes,
             rewards.append((rewards[-1] if rewards else 0.0) + compute_reward(pre_ram, curr_ram))
         print(f"  replay done — step={len(committed_actions)}  reward={rewards[-1]:.1f}")
 
-    best_reward   = rewards[-1] if rewards else 0.0
-    stale_count   = 0
-    t_start       = time.time()
+    rollouts_high     = rollouts * 4
+    current_rollouts  = rollouts
+    t_start           = time.time()
     pending_events: list[str] = []
 
     if verbose:
-        print(f"\n  {'step':>4}  {'reward':>7}  {'death':>5}  {'time':>7}  event")
-        print("  " + "-" * 50)
+        print(f"\n  {'step':>4}  {'reward':>7}  {'death':>5}  {'rolls':>5}  {'time':>7}  event")
+        print("  " + "-" * 58)
 
     while True:
         elapsed = time.time() - t_start
@@ -256,10 +256,10 @@ def search_and_play(env, initial_emu_state: bytes,
         # ── 1. Monte Carlo lookahead ──────────────────────────────────────────
         task = (committed.emu_state, rollout_len, current_level)
         if pool is not None:
-            rollout_results = pool.map(_worker_rollout, [task] * rollouts)
+            rollout_results = pool.map(_worker_rollout, [task] * current_rollouts)
         else:
             rollout_results = [run_random_rollout(env, committed.emu_state, rollout_len, current_level)
-                               for _ in range(rollouts)]
+                               for _ in range(current_rollouts)]
             rewind_state(env, committed.emu_state)
 
         best_seq, best_rollout_reward, best_died = None, -float('inf'), True
@@ -270,18 +270,46 @@ def search_and_play(env, initial_emu_state: bytes,
             if reward > best_rollout_reward:
                 best_rollout_reward, best_seq, best_died = reward, seq, died
 
-        # ── 2. Commit or force rewind ─────────────────────────────────────────
+        death_rate = died_count / current_rollouts
+
+        # ── 2. Commit or rewind ───────────────────────────────────────────────
         if best_died:
-            stale_count = patience   # force backtrack below
-            actions_to_commit = []
-        else:
-            n = len(best_seq)
-            commit_n = np.random.randint(n // 2, n + 1) if n >= 2 else n
-            actions_to_commit = best_seq[:commit_n]
+            # All rollouts died — rewind and scale up rollouts
+            n = len(committed_actions)
+            if n > 0:
+                rewind_back = np.random.randint(1, min(max_rewind, n) + 1)
+                rewind_to   = n - rewind_back
+            else:
+                rewind_to = 0
 
-        if actions_to_commit:
+            current_reward = rewards[-1] if rewards else 0.0
+            current_rollouts = rollouts_high
+            if verbose:
+                ev_col = " ".join(pending_events) if pending_events else ""
+                print(f"  {n:4d}  {current_reward:7.1f}  {death_rate:5.2f}  {current_rollouts:5d}  {elapsed:6.1f}s  {ev_col}⏪ →{rewind_to}")
+                pending_events.clear()
+
+            if rewind_to <= 0:
+                committed.emu_state = initial_emu_state
+                rewind_to = 0
+            else:
+                committed.emu_state = states[rewind_to - 1]
+
             rewind_state(env, committed.emu_state)
+            committed_actions = committed_actions[:rewind_to]
+            states            = states[:rewind_to]
+            rewards           = rewards[:rewind_to]
+            continue
 
+        # Death rate recovered — reset rollouts to base
+        if death_rate < 0.5 and current_rollouts == rollouts_high:
+            current_rollouts = rollouts
+
+        n = len(best_seq)
+        commit_n = np.random.randint(n // 2, n + 1) if n >= 2 else n
+        actions_to_commit = best_seq[:commit_n]
+
+        rewind_state(env, committed.emu_state)
         for act in actions_to_commit:
             pre_ram = env.unwrapped.get_ram().copy()
             step_env(env, act)
@@ -312,48 +340,14 @@ def search_and_play(env, initial_emu_state: bytes,
             if committed.done:
                 break
 
-        # ── 3. Progress check & backtrack ─────────────────────────────────────
-        if actions_to_commit:
-            current_reward = rewards[-1] if rewards else 0.0
-            if current_reward > best_reward:
-                best_reward = current_reward
-                stale_count = 0
-            else:
-                stale_count += 1
-
-            step_num      = len(committed_actions)
-            prev_step_num = step_num - len(actions_to_commit)
-            if verbose and ((step_num // 10) > (prev_step_num // 10) or committed.done or pending_events):
-                ev_col = " ".join(pending_events) if pending_events else ""
-                print(f"  {step_num:4d}  {current_reward:7.1f}  {died_count/rollouts:5.2f}  {elapsed:6.1f}s  {ev_col}")
-                pending_events.clear()
-
-        if stale_count >= patience:
-            n = len(committed_actions)
-            if n > 0:
-                rewind_back = np.random.randint(1, min(max_rewind, n) + 1)
-                rewind_to   = n - rewind_back
-            else:
-                rewind_to = 0
-
-            current_reward = rewards[-1] if rewards else 0.0
-            if verbose:
-                ev_col = " ".join(pending_events) if pending_events else ""
-                print(f"  {n:4d}  {current_reward:7.1f}  {died_count/rollouts:5.2f}  {elapsed:6.1f}s  {ev_col}⏪ →{rewind_to}")
-                pending_events.clear()
-
-            if rewind_to <= 0:
-                committed.emu_state = initial_emu_state
-                rewind_to = 0
-            else:
-                committed.emu_state = states[rewind_to - 1]
-
-            rewind_state(env, committed.emu_state)
-            committed_actions = committed_actions[:rewind_to]
-            states            = states[:rewind_to]
-            rewards           = rewards[:rewind_to]
-            stale_count  = 0
-            best_reward  = rewards[-1] if rewards else 0.0
+        # ── 3. Progress log ───────────────────────────────────────────────────
+        step_num      = len(committed_actions)
+        prev_step_num = step_num - len(actions_to_commit)
+        current_reward = rewards[-1] if rewards else 0.0
+        if verbose and ((step_num // 10) > (prev_step_num // 10) or committed.done or pending_events):
+            ev_col = " ".join(pending_events) if pending_events else ""
+            print(f"  {step_num:4d}  {current_reward:7.1f}  {death_rate:5.2f}  {current_rollouts:5d}  {elapsed:6.1f}s  {ev_col}")
+            pending_events.clear()
 
     return committed_actions, committed, rewards
 
@@ -383,7 +377,6 @@ def main():
     parser.add_argument("--level",       type=int, default=1, choices=list(range(1, 9)))
     parser.add_argument("--rollouts",    type=int, default=512)
     parser.add_argument("--rollout-len", type=int, default=48)
-    parser.add_argument("--patience",    type=int, default=8)
     parser.add_argument("--max-rewind",  type=int, default=30,
                         help="Max steps to rewind on backtrack (default: 30)")
     parser.add_argument("--max-time",    type=int, default=600)
@@ -434,7 +427,6 @@ def main():
         print(f"  Skip:           {SKIP}")
         print(f"  Rollouts/Step:  {args.rollouts}")
         print(f"  Rollout Length: {args.rollout_len} actions ({args.rollout_len * SKIP} frames)")
-        print(f"  Patience:       {args.patience} stale commits before rewind")
         print(f"  Max Rewind:     {args.max_rewind} steps")
         print(f"  Workers:        {args.workers if args.workers > 1 else 1}")
         print(f"  Goal:           {args.goal}")
@@ -448,7 +440,6 @@ def main():
         env, initial_emu_state,
         rollouts=args.rollouts,
         rollout_len=args.rollout_len,
-        patience=args.patience,
         max_time=args.max_time,
         level=args.level,
         max_rewind=args.max_rewind,
