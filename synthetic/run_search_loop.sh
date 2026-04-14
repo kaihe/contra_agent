@@ -47,8 +47,8 @@ while true; do
     echo "────────────────────────────────────────"
 
     T_START=$(date +%s%N)
-    PROCS=4
     WORKERS=32
+    PROCS=$(( $(nproc) / WORKERS ))
     ROLLOUTS=512
     PIDS=()
     for i in $(seq 1 ${PROCS}); do
