@@ -30,9 +30,9 @@ from mc_search import (
 )
 
 
-# thin shim so pool.map (single-argument) can call _run_one_search
-def _run_instance(kwargs: dict) -> str | None:
-    return _run_one_search(**kwargs)
+def _run_instance(kwargs: dict, queue) -> None:
+    """Worker target: run one search and push the result onto queue."""
+    queue.put(_run_one_search(**kwargs))
 
 
 def _print_summary(run: int, total_traces: int, total_time: float) -> None:
@@ -118,10 +118,19 @@ def main():
             instance_id=i,
         ) for i in range(args.instances)]
 
+        # Use Process (not Pool) so workers are non-daemon and can spawn
+        # their own inner rollout Pool without hitting the
+        # "daemonic processes are not allowed to have children" error.
+        queue = ctx.Queue()
+        procs = [ctx.Process(target=_run_instance, args=(kw, queue))
+                 for kw in instance_kwargs]
         t0 = time.time()
-        with ctx.Pool(args.instances) as ipool:
-            results = ipool.map(_run_instance, instance_kwargs)
-        elapsed = time.time() - t0
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join()
+        elapsed  = time.time() - t0
+        results  = [queue.get() for _ in procs]
 
         wins = [r for r in results if r]
         total_traces += len(wins)
