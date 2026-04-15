@@ -116,6 +116,7 @@ def main():
             goal=args.goal,
             workers=workers_per,
             instance_id=i,
+            verbose=(i == 0),  # only instance 0 prints step-by-step progress
         ) for i in range(args.instances)]
 
         # Use Process (not Pool) so workers are non-daemon and can spawn

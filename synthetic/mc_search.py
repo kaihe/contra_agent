@@ -350,17 +350,15 @@ FPS = 20  # logical fps = 60 NES fps / SKIP
 
 
 def save_trace(initial_state_for_npz: bytes, actions: list, trace_path: str,
-               level: int = 1, outcome: str = "lose") -> dict:
-    """Save trace to NPZ, replay it to get events, append events, return replay report."""
+               level: int = 1) -> None:
+    """Save a winning trace to NPZ."""
 
     os.makedirs(os.path.dirname(trace_path), exist_ok=True)
 
-    actions_nes = np.array(actions, dtype=np.uint8)
-
     np.savez_compressed(trace_path,
-        actions=actions_nes,
+        actions=np.array(actions, dtype=np.uint8),
         initial_state=np.frombuffer(initial_state_for_npz, dtype=np.uint8),
-        level=f"Level{level}", outcome=outcome, fps=FPS
+        level=f"Level{level}", outcome="win", fps=FPS
     )
 
     print(f"Trace saved to: {trace_path}")
@@ -425,7 +423,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     date_str   = time.strftime("%Y%m%d%H%M%S" if instance_id is not None else "%Y%m%d%H%M")
     level_tag  = "game" if goal == "game_clear" else f"level{level}"
     trace_path = os.path.join(TRACE_DIR, f"win_{level_tag}_{date_str}{suffix}.npz")
-    save_trace(initial_state_for_npz, actions, trace_path, level=level, outcome="win")
+    save_trace(initial_state_for_npz, actions, trace_path, level=level)
     if prefix:
         reward_str = f"{rewards[-1]:.1f}" if rewards else "0.0"
         print(f"{prefix}WIN   steps={len(actions)}  reward={reward_str}  → {trace_path}", flush=True)
