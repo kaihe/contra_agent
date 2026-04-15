@@ -372,6 +372,72 @@ def save_trace(initial_state_for_npz: bytes, actions: list, trace_path: str,
     print(f"Trace saved to: {trace_path}")
 
 
+def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_actions,
+                    goal, workers, verbose=False, resume_from=None, instance_id=None):
+    """Set up env+pool, run one full search, save trace if won. Returns trace path or None."""
+    prefix = f"[i{instance_id}] " if instance_id is not None else ""
+
+    _load_bigram(level)
+    if instance_id is not None:
+        np.random.seed((os.getpid() + instance_id * 1337) % (2**32))
+
+    state_label = DEFAULT_STATE_BY_LEVEL[level]
+    use_spread  = level > 1
+
+    pool = mp.Pool(workers, initializer=_worker_init,
+                   initargs=(GAME, state_label, use_spread)) if workers > 1 else None
+    env = retro.make(
+        game=GAME, state=retro.State.NONE if use_spread else state_label,
+        use_restricted_actions=retro.Actions.ALL,
+        obs_type=retro.Observations.IMAGE,
+        render_mode=None,
+        inttype=retro.data.Integrations.CUSTOM_ONLY,
+    )
+    if use_spread:
+        env.load_state(f"spread_gun_state/{state_label}", retro.data.Integrations.CUSTOM_ONLY)
+        if verbose:
+            print(f"  Spread state: spread_gun_state/{state_label}.state")
+    env.reset()
+    initial_state_for_npz = env.em.get_state()
+    initial_emu_state      = env.em.get_state()
+
+    if prefix:
+        print(f"{prefix}start  level={level}  workers={workers}", flush=True)
+
+    actions, final_state, rewards = search_and_play(
+        env, initial_emu_state,
+        rollouts=rollouts, rollout_len=rollout_len, max_time=max_time,
+        level=level, max_rewind=max_rewind, max_actions=max_actions,
+        goal=goal, verbose=verbose, resume_from=resume_from, pool=pool,
+    )
+
+    env.close()
+    if pool:
+        pool.close()
+        pool.join()
+
+    if verbose:
+        print(f"\n{'=' * 70}\nRESULT\n{'=' * 70}")
+        print(f"  Actions: {len(actions)}")
+        print(f"  Reward:  {rewards[-1] if rewards else 0.0:.2f}")
+
+    if not final_state.done:
+        if prefix:
+            reward_str = f"{rewards[-1]:.1f}" if rewards else "0.0"
+            print(f"{prefix}no win  steps={len(actions)}  reward={reward_str}", flush=True)
+        return None
+
+    suffix     = f"_i{instance_id}" if instance_id is not None else ""
+    date_str   = time.strftime("%Y%m%d%H%M%S" if instance_id is not None else "%Y%m%d%H%M")
+    level_tag  = "game" if goal == "game_clear" else f"level{level}"
+    trace_path = os.path.join(TRACE_DIR, f"win_{level_tag}_{date_str}{suffix}.npz")
+    save_trace(initial_state_for_npz, actions, trace_path, level=level, outcome="win")
+    if prefix:
+        reward_str = f"{rewards[-1]:.1f}" if rewards else "0.0"
+        print(f"{prefix}WIN   steps={len(actions)}  reward={reward_str}  → {trace_path}", flush=True)
+    return trace_path
+
+
 def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
     parser.add_argument("--level",       type=int, default=1, choices=list(range(1, 9)))
@@ -395,30 +461,9 @@ def main():
     _load_bigram(args.level)
     np.random.seed(int(time.time() * 1000) % (2**32))
 
-    state_label = DEFAULT_STATE_BY_LEVEL[args.level]
-
-    use_spread = args.level > 1
-    pool = mp.Pool(args.workers, initializer=_worker_init,
-                   initargs=(GAME, state_label, use_spread)) if args.workers > 1 else None
-
-    env = retro.make(
-        game=GAME, state=retro.State.NONE if use_spread else state_label,
-        use_restricted_actions=retro.Actions.ALL,
-        obs_type=retro.Observations.IMAGE,
-        render_mode=None,
-        inttype=retro.data.Integrations.CUSTOM_ONLY,
-    )
-    if use_spread:
-        env.load_state(f"spread_gun_state/{state_label}",
-                       retro.data.Integrations.CUSTOM_ONLY)
-        if not args.no_verbose:
-            print(f"  Spread state: spread_gun_state/{state_label}.state")
-    env.reset()
-    initial_state_for_npz = env.em.get_state()
-    initial_emu_state      = env.em.get_state()
-
     verbose = not args.no_verbose
     if verbose:
+        state_label = DEFAULT_STATE_BY_LEVEL[args.level]
         print("=" * 70)
         print("Playfun — Monte Carlo Search with Backtracking")
         print("=" * 70)
@@ -436,41 +481,11 @@ def main():
             print(f"  Resume:         {args.resume}")
         print("=" * 70)
 
-    actions, final_state, rewards = search_and_play(
-        env, initial_emu_state,
-        rollouts=args.rollouts,
-        rollout_len=args.rollout_len,
-        max_time=args.max_time,
-        level=args.level,
-        max_rewind=args.max_rewind,
-        max_actions=args.max_actions,
-        goal=args.goal,
-        verbose=verbose,
-        resume_from=args.resume,
-        pool=pool,
+    _run_one_search(
+        level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
+        max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
+        goal=args.goal, workers=args.workers, verbose=verbose, resume_from=args.resume,
     )
-
-    if verbose:
-        print()
-        print("=" * 70)
-        print("RESULT")
-        print("=" * 70)
-        print(f"  Actions: {len(actions)}")
-        print(f"  Reward:  {rewards[-1] if rewards else 0.0:.2f}")
-
-    outcome    = "win" if final_state.done else "lose"
-    date_str   = time.strftime("%Y%m%d%H%M")
-    level_tag  = "game" if args.goal == "game_clear" else f"level{args.level}"
-    trace_path = (os.path.join(TRACE_DIR, f"win_{level_tag}_{date_str}.npz")
-                  if final_state.done else
-                  os.path.join(TRACE_DIR, f"lose_{level_tag}_{date_str}.npz"))
-
-    env.close()
-    if pool is not None:
-        pool.close()
-        pool.join()
-
-    save_trace(initial_state_for_npz, actions, trace_path, level=args.level, outcome=outcome)
 
 
 if __name__ == "__main__":

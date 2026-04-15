@@ -34,15 +34,15 @@ class Recording:
     def __init__(self, features_path: str, n_text_tokens: int = 1):
         self.path = features_path
         data = np.load(features_path)
-        self._ram    = torch.from_numpy(data["ram"].copy()).share_memory_()                         # (N, 2048) uint8
-        self._dpad   = torch.from_numpy(data["dpad"].astype(np.int64)).share_memory_()             # (N,)
-        self._button = torch.from_numpy(data["button"].astype(np.int64)).share_memory_()           # (N,)
+        self._ram    = torch.from_numpy(data["ram"].copy())                         # (N, 2048) uint8
+        self._dpad   = torch.from_numpy(data["dpad"].astype(np.int64))             # (N,)
+        self._button = torch.from_numpy(data["button"].astype(np.int64))           # (N,)
         self._n      = len(self._dpad)
 
         if "text" in data and n_text_tokens > 0:
-            self._text = torch.from_numpy(data["text"].astype(np.float32))[:, :n_text_tokens, :].share_memory_()
+            self._text = torch.from_numpy(data["text"].astype(np.float32))[:, :n_text_tokens, :]
         else:
-            self._text = torch.zeros(self._n, n_text_tokens, 768).share_memory_()
+            self._text = torch.zeros(self._n, n_text_tokens, 768)
 
     def __len__(self) -> int:
         return self._n

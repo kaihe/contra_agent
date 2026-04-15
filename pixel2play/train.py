@@ -108,11 +108,13 @@ class NESDataModule(pl.LightningDataModule):
 
         rng = random.Random(42)
         val_recs, train_recs = [], []
-        n_val_per_level = 10
-        for recs in by_level.values():
+        for level_key, recs in by_level.items():
             shuffled = recs[:]
             rng.shuffle(shuffled)
-            n_val = min(n_val_per_level, len(shuffled) - 1)
+            if level_key == "level1":
+                n_val = min(10, len(shuffled) - 1)
+            else:
+                n_val = 0
             val_recs.extend(shuffled[:n_val])
             train_recs.extend(shuffled[n_val:])
 
@@ -194,36 +196,7 @@ def main():
     module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout, weight_decay=weight_decay)
     module.model = torch.compile(module.model)
 
-    from lightning.pytorch.callbacks import ModelCheckpoint
-
-    class GamePlayCallback(pl.Callback):
-        """Run one episode after each training epoch and log gameplay metrics."""
-
-        def __init__(self, n_episode_steps: int = 1000):
-            self.n_episode_steps = n_episode_steps
-
-        def on_train_epoch_end(self, trainer, pl_module):
-            model = pl_module.model
-            # Unwrap torch.compile if needed
-            raw = getattr(model, "_orig_mod", model)
-            raw.eval()
-            try:
-                from pixel2play.play import run_episode
-                result = run_episode(raw, n_steps=self.n_episode_steps, temperature=0)
-            finally:
-                raw.train()
-
-            pl_module.log_dict({
-                "play/steps":       float(result["steps"]),
-                "play/xscroll":     float(result["xscroll"]),
-                "play/enemies_hit": float(result["enemies_hit"]),
-                "play/level_up":    float(result["level_up"]),
-            }, on_epoch=True)
-            logging.info(
-                f"[play epoch={trainer.current_epoch}] "
-                f"steps={result['steps']} xscroll={result['xscroll']} "
-                f"enemies_hit={result['enemies_hit']:.0f} level_up={result['level_up']}"
-            )
+    from lightning.pytorch.callbacks import ModelCheckpoint, ThroughputMonitor
 
     ckpt_dir = os.path.join(args.checkpoint_dir, args.exp_name) if args.exp_name else args.checkpoint_dir
     checkpoint_cb = ModelCheckpoint(
@@ -231,6 +204,11 @@ def main():
         filename="last",
         save_top_k=1,
         enable_version_counter=False,
+    )
+    # batch: (ram, dpad, button, text, valid_mask); ram shape: (B, T, 2048)
+    throughput_cb = ThroughputMonitor(
+        batch_size_fn=lambda batch: batch[0].shape[0],
+        length_fn=lambda batch: batch[0].shape[0] * batch[0].shape[1],
     )
 
     trainer = pl.Trainer(
@@ -240,7 +218,7 @@ def main():
         accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=1,
         precision="bf16-mixed",
-        callbacks=[checkpoint_cb, GamePlayCallback()],
+        callbacks=[checkpoint_cb, throughput_cb],
         fast_dev_run=args.fast_dev_run,
         default_root_dir="tmp",
     )
