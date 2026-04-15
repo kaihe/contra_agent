@@ -55,7 +55,7 @@ def step_env(env, act: np.ndarray) -> None:
     """Step the environment SKIP times with the given action."""
     act = np.asarray(act, dtype=np.uint8)
     for _ in range(SKIP):
-        env.step(act.copy())
+        env.step(act)
 
 
 def save_video(frames: np.ndarray, path: str) -> None:

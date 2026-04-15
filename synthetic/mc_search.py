@@ -77,6 +77,9 @@ _ACTION_PRIORS: dict[int, np.ndarray] = {}  # level (1-indexed) → bigram prior
 # Row i gives the probability of each trimmed action given previous action i.
 _TRIMMED_PRIORS: dict[int, np.ndarray] = {}  # level → (NUM_ACTIONS, NUM_TRIMMED)
 
+# CDF of trimmed priors for fast sampling via searchsorted (avoids np.random.choice overhead).
+_TRIMMED_CDFS: dict[int, np.ndarray] = {}   # level → (NUM_ACTIONS, NUM_TRIMMED) cumulative sums
+
 
 def _build_trimmed_prior(full_prior: np.ndarray) -> np.ndarray:
     """Extract and renormalise trimmed columns from a full (28,28) prior."""
@@ -96,6 +99,12 @@ def _get_trimmed_prior(level: int) -> np.ndarray:
     return _TRIMMED_PRIORS[level]
 
 
+def _get_trimmed_cdf(level: int) -> np.ndarray:
+    if level not in _TRIMMED_CDFS:
+        _TRIMMED_CDFS[level] = np.cumsum(_get_trimmed_prior(level), axis=1).astype(np.float32)
+    return _TRIMMED_CDFS[level]
+
+
 # ── Parallel rollout worker ────────────────────────────────────────────────────
 
 _worker_env = None
@@ -108,7 +117,7 @@ def _worker_init(game: str, state_label: str, use_spread: bool) -> None:
     _worker_env = retro.make(
         game=game, state=retro.State.NONE if use_spread else state_label,
         use_restricted_actions=retro.Actions.ALL,
-        obs_type=retro.Observations.IMAGE,
+        obs_type=retro.Observations.RAM,   # workers never use pixel obs; skip frame decode
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
@@ -136,7 +145,8 @@ def _load_bigram(start_level: int) -> None:
             prior = data[key]
             if prior.shape == (NUM_ACTIONS, NUM_ACTIONS):
                 _ACTION_PRIORS[level] = prior
-                _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior
+                _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior + CDF
+                _TRIMMED_CDFS.pop(level, None)
                 # print(f"Loaded action bigram prior for {key}")
             else:
                 print(f"WARNING: bigram shape {prior.shape} != ({NUM_ACTIONS},{NUM_ACTIONS}) for {key}, using uniform.")
@@ -147,13 +157,16 @@ def _load_bigram(start_level: int) -> None:
 def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1) -> tuple:
     """Returns (seq, cumulative_reward, died)."""
     rewind_state(env, start_emu_state)
-    trimmed_prior = _get_trimmed_prior(level)
-    # Start from a random trimmed action index
-    prev_idx = int(np.random.choice(TRIMMED_ACTION_INDICES))
+    trimmed_cdf = _get_trimmed_cdf(level)
+    # Pre-sample all random numbers for this rollout in one call (faster than per-step choice)
+    rands = np.random.random(length + 1).astype(np.float32)
+    prev_trimmed = int(np.searchsorted(trimmed_cdf[np.random.randint(NUM_ACTIONS)], rands[0]))
+    prev_idx = TRIMMED_ACTION_INDICES[min(prev_trimmed, NUM_TRIMMED - 1)]
     cumulative_reward = 0.0
     seq = []
-    for _ in range(length):
-        prev_idx = int(np.random.choice(TRIMMED_ACTION_INDICES, p=trimmed_prior[prev_idx]))
+    for i in range(length):
+        t = int(np.searchsorted(trimmed_cdf[prev_idx], rands[i + 1]))
+        prev_idx = TRIMMED_ACTION_INDICES[min(t, NUM_TRIMMED - 1)]
         act = (_DPAD_NP[prev_idx // NUM_BUTTONS] | _BUTTON_NP[prev_idx % NUM_BUTTONS]).copy()
 
         pre_ram = env.unwrapped.get_ram().copy()
@@ -179,7 +192,6 @@ def search_and_play(env, initial_emu_state: bytes,
                     max_actions: int = 4000,
                     goal: str = "level_up",
                     verbose=True,
-                    resume_from: str = None,
                     pool=None):
 
     committed = State(emu_state=initial_emu_state)
@@ -187,24 +199,6 @@ def search_and_play(env, initial_emu_state: bytes,
     states            = []   # [i]: emu_state after committed_actions[i]
     rewards           = []   # [i]: cumulative_reward after committed_actions[i]
     current_level     = level
-
-    # ── Resume from checkpoint ────────────────────────────────────────────────
-    if resume_from and os.path.exists(resume_from):
-        ckpt = np.load(resume_from, allow_pickle=True)
-        saved_actions = ckpt["actions"]
-        print(f"  Resuming from {resume_from} (replaying {len(saved_actions)} actions)")
-        rewind_state(env, initial_emu_state)
-        for i, act in enumerate(saved_actions):
-            if i % 500 == 0:
-                print(f"  replaying {i}/{len(saved_actions)} ...")
-            pre_ram = env.unwrapped.get_ram().copy()
-            step_env(env, act)
-            curr_ram = env.unwrapped.get_ram()
-            committed.emu_state = env.em.get_state()
-            committed_actions.append(act)
-            states.append(committed.emu_state)
-            rewards.append((rewards[-1] if rewards else 0.0) + compute_reward(pre_ram, curr_ram))
-        print(f"  replay done — step={len(committed_actions)}  reward={rewards[-1]:.1f}")
 
     rollouts_high     = rollouts * 4
     current_rollouts  = rollouts
@@ -373,7 +367,7 @@ def save_trace(initial_state_for_npz: bytes, actions: list, trace_path: str,
 
 
 def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_actions,
-                    goal, workers, verbose=False, resume_from=None, instance_id=None):
+                    goal, workers, verbose=False, instance_id=None):
     """Set up env+pool, run one full search, save trace if won. Returns trace path or None."""
     prefix = f"[i{instance_id}] " if instance_id is not None else ""
 
@@ -408,7 +402,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
         env, initial_emu_state,
         rollouts=rollouts, rollout_len=rollout_len, max_time=max_time,
         level=level, max_rewind=max_rewind, max_actions=max_actions,
-        goal=goal, verbose=verbose, resume_from=resume_from, pool=pool,
+        goal=goal, verbose=verbose, pool=pool,
     )
 
     env.close()
@@ -447,8 +441,6 @@ def main():
                         help="Max steps to rewind on backtrack (default: 30)")
     parser.add_argument("--max-time",    type=int, default=600)
     parser.add_argument("--workers",     type=int, default=os.cpu_count())
-    parser.add_argument("--resume",      type=str, default=None,
-                        help="Path to a .npz file to resume search from")
     parser.add_argument("--goal",        type=str, default="level_up",
                         choices=["level_up", "game_clear"],
                         help="level_up: stop on level-up (default); game_clear: stop on game clear")
@@ -477,14 +469,12 @@ def main():
         print(f"  Goal:           {args.goal}")
         print(f"  Max Actions:    {args.max_actions}")
         print(f"  Time Budget:    {args.max_time}s")
-        if args.resume:
-            print(f"  Resume:         {args.resume}")
         print("=" * 70)
 
     _run_one_search(
         level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
         max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
-        goal=args.goal, workers=args.workers, verbose=verbose, resume_from=args.resume,
+        goal=args.goal, workers=args.workers, verbose=verbose,
     )
 
 
