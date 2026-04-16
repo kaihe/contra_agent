@@ -31,6 +31,9 @@ __pycache__/
 *.npz
 !synthetic/action_bigram.npz
 
+# Data directories
+annotate/bc_data/
+
 # tmp files
 tmp/
 legacy/

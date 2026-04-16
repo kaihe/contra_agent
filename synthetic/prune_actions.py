@@ -88,16 +88,16 @@ def prune_trace(npz_path: str, env) -> dict:
         # Apply original action
         rewind_state(env, current_emu_state)
         step_env(env, act)
-        ram_orig  = env.unwrapped.get_ram().copy()
+        obs_orig  = env.em.get_screen().copy()
         next_orig = env.em.get_state()
 
         # Apply no-op from same starting state
         rewind_state(env, current_emu_state)
         step_env(env, NOOP)
-        ram_noop  = env.unwrapped.get_ram().copy()
+        obs_noop  = env.em.get_screen().copy()
         next_noop = env.em.get_state()
 
-        if np.array_equal(ram_orig, ram_noop):
+        if np.array_equal(obs_orig, obs_noop):
             noop_mask[i]      = True
             pruned[i]         = NOOP
             current_emu_state = next_noop
@@ -116,38 +116,6 @@ def prune_trace(npz_path: str, env) -> dict:
         "fps":            int(ckpt["fps"]) if "fps" in ckpt else 20,
     }
 
-
-# ── Verification ───────────────────────────────────────────────────────────────
-
-def verify_trace(result: dict, env) -> str:
-    """Replay the pruned trace and return 'game_clear' | 'level_up' | 'lose'."""
-    rewind_state(env, result["initial_state"])
-    leveled_up   = False
-    game_cleared = False
-    for act in result["pruned"]:
-        pre_ram = env.unwrapped.get_ram().copy()
-        step_env(env, act)
-        curr_ram = env.unwrapped.get_ram()
-        if EV_PLAYER_DIE.trigger(pre_ram, curr_ram):
-            return "lose"
-        if EV_LEVELUP.trigger(pre_ram, curr_ram):
-            leveled_up = True
-        if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):
-            game_cleared = True
-    if game_cleared:
-        return "game_clear"
-    if leveled_up:
-        return "level_up"
-    return "lose"
-
-
-def _outcomes_match(orig: str, pruned_result: str) -> bool:
-    WIN = {"win", "level_up", "game_clear"}
-    if orig in WIN and pruned_result in WIN:
-        return True
-    return orig == pruned_result
-
-
 # ── Save ───────────────────────────────────────────────────────────────────────
 
 def save_pruned(result: dict, out_path: str) -> None:
@@ -162,137 +130,31 @@ def save_pruned(result: dict, out_path: str) -> None:
     )
 
 
-# ── Worker task (runs in a subprocess) ────────────────────────────────────────
-
-def _worker_task(args: tuple) -> dict:
-    """Prune one trace (and optionally verify + save).  Returns a stats dict."""
-    npz_path, do_verify, do_save, out_dir = args
-    env = _worker_env
-
-    try:
-        result = prune_trace(npz_path, env)
-    except Exception as exc:
-        return {"npz_path": npz_path, "error": str(exc)}
-
-    verify_status = None
-    if do_verify:
-        pruned_outcome = verify_trace(result, env)
-        verify_status  = _outcomes_match(result["outcome"], pruned_outcome)
-        if not verify_status:
-            verify_status = f"FAIL(orig={result['outcome']} pruned={pruned_outcome})"
-
-    if do_save:
-        fname    = os.path.basename(npz_path)
-        out_path = os.path.join(out_dir, fname)
-        save_pruned(result, out_path)
-
-    return {
-        "npz_path":       npz_path,
-        "original_count": result["original_count"],
-        "noop_count":     result["noop_count"],
-        "verify_status":  verify_status,
-        "saved_to":       os.path.join(out_dir, os.path.basename(npz_path)) if do_save else None,
-    }
-
-
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Prune no-effect actions from mc_traces by replacing them with no-ops"
+    from contra.replay import replay_actions
+
+    npz_path = "synthetic/mc_trace/win_level1_202603301145.npz"
+
+    _worker_init()
+    result = prune_trace(npz_path, _worker_env)
+
+    n_orig = result["original_count"]
+    n_noop = result["noop_count"]
+    pct    = 100 * n_noop / n_orig if n_orig else 0.0
+    print(f"{n_noop}/{n_orig} ({pct:.1f}%) actions replaced with no-ops")
+
+    replay_result = replay_actions(
+        result["pruned"],
+        initial_state=result["initial_state"],
+        level=result["level"],
+        want_video=False,
+        verbose=False,
     )
-    parser.add_argument("traces",    nargs="+", help="Paths to .npz trace files")
-    parser.add_argument("--save",    action="store_true",
-                        help="Save pruned traces to mc_trace_pruned/ with the same filename")
-    parser.add_argument("--verify",  action="store_true",
-                        help="Replay each pruned trace to confirm the original outcome is preserved")
-    parser.add_argument("--workers", type=int, default=os.cpu_count(),
-                        help=f"Number of parallel workers (default: {os.cpu_count()})")
-    parser.add_argument("--quiet",   action="store_true",
-                        help="Suppress per-trace output")
-    args = parser.parse_args()
-
-    paths = sorted(p for p in args.traces if os.path.exists(p))
-    skipped = len(args.traces) - len(paths)
-    if skipped:
-        print(f"  SKIP {skipped} missing file(s)")
-
-    if not paths:
-        print("No traces to process.")
-        return
-
-    # Determine output directory relative to the first trace's parent
-    first_dir = os.path.dirname(os.path.abspath(paths[0]))
-    out_dir   = os.path.normpath(os.path.join(first_dir, "..", "mc_trace_pruned"))
-
-    if args.save:
-        already = {os.path.basename(p) for p in paths
-                   if os.path.exists(os.path.join(out_dir, os.path.basename(p)))}
-        if already:
-            print(f"  SKIP {len(already)} already-pruned file(s) in {out_dir}/")
-        paths = [p for p in paths if os.path.basename(p) not in already]
-        if not paths:
-            print("All traces already pruned.")
-            return
-
-    tasks = [(p, args.verify, args.save, out_dir) for p in paths]
-
-    total_orig   = 0
-    total_noop   = 0
-    verify_ok    = 0
-    verify_fail  = 0
-
-    workers = min(args.workers, len(paths))
-    pool = mp.Pool(workers, initializer=_worker_init) if workers > 1 else None
-
-    if pool is not None:
-        it = pool.imap_unordered(_worker_task, tasks)
-    else:
-        _worker_init()
-        it = (_worker_task(t) for t in tasks)
-
-    for r in it:
-        if "error" in r:
-            print(f"  ERROR {os.path.basename(r['npz_path'])}: {r['error']}")
-            continue
-
-        N    = r["original_count"]
-        noop = r["noop_count"]
-        pct  = 100.0 * noop / N if N else 0.0
-        total_orig += N
-        total_noop += noop
-
-        if not args.quiet:
-            line = (f"  {os.path.basename(r['npz_path']):50s}  "
-                    f"{N:4d} actions  {noop:4d} no-op ({pct:5.1f}%)  "
-                    f"{N - noop:4d} effective")
-            if r["verify_status"] is not None:
-                v = r["verify_status"]
-                line += f"  verify: {'OK' if v is True else v}"
-            if r["saved_to"]:
-                line += f"  → {os.path.basename(r['saved_to'])}"
-            print(line)
-
-        if r["verify_status"] is not None:
-            if r["verify_status"] is True:
-                verify_ok += 1
-            else:
-                verify_fail += 1
-
-    if pool is not None:
-        pool.close()
-        pool.join()
-
-    print()
-    if total_orig:
-        pct = 100.0 * total_noop / total_orig
-        print(f"Summary: {total_orig} total actions  →  "
-              f"{total_noop} no-ops ({pct:.1f}% pruned)  "
-              f"{total_orig - total_noop} effective")
-    if args.verify:
-        print(f"Verify:  {verify_ok} OK  {verify_fail} FAILED")
-    if args.save:
-        print(f"Output:  {out_dir}/")
+    ok = replay_result["result"] == result["outcome"]
+    print(f"verify: {'OK' if ok else 'FAIL'}"
+          f" (got {replay_result['result']!r}, expected {result['outcome']!r})")
 
 
 if __name__ == "__main__":

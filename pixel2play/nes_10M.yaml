@@ -3,10 +3,6 @@ shared:
   n_seq_timesteps: 128
   frame_height: 192
   frame_width: 192
-  text_tokenizer_config:
-    text_tokenizer_name: "gemma"
-    text_embedding_shape: [0, 768]
-    text_annotation_model_version: ["gemini-3-flash-preview"]
   tokenizer:
     type: "conv"
     conv_tokenizer_config:
@@ -39,6 +35,7 @@ stage3_finetune:
     beta_2: 0.999
 
   n_epochs: 30
+  n_val_recordings: 50
   accumulate_grad_batches: 16
 
   training_dataset:

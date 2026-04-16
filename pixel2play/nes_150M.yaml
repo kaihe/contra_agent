@@ -1,12 +1,8 @@
 shared:
   output_path: ${USER}/policy_model/nes_150M
-  n_seq_timesteps: 200
+  n_seq_timesteps: 128
   frame_height: 192
   frame_width: 192
-  text_tokenizer_config:
-    text_tokenizer_name: "gemma"
-    text_embedding_shape: [0, 768]
-    text_annotation_model_version: ["gemini-3-flash-preview"]
   tokenizer:
     type: "conv"
     conv_tokenizer_config:
@@ -20,10 +16,10 @@ policy_model:
   n_thinking_tokens: 1
   transformer_dim: &transformer_dim 1024
   mask_block_size: 128
-  attention_history_len: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
+  attention_history_len: [128, 128, 128, 128, 128, 128, 128, 128, 128, 128]
   n_kv_sink_tokens: 0
   model_type: "dense"
-  dropout: 0.1
+  dropout: 0.2
   action_decoder:
     embed_dim: *transformer_dim
 
@@ -35,13 +31,14 @@ stage3_finetune:
     beta_1: 0.9
     beta_2: 0.999
 
-  n_epochs: 30
-  accumulate_grad_batches: 16
+  n_epochs: 12
+  n_val_recordings: 50
+  accumulate_grad_batches: 32
 
   training_dataset:
     batch_size: &stage3_batch_size 8
     local_prefix: dataset
-    data_folder: annotate/bc_data/level1_ram
+    data_folder: annotate/bc_data/level_all_ram_
     always_labelled: true
     warn_on_starvation: false
     rand_augmentation:

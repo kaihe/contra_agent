@@ -42,7 +42,6 @@ Training chunk  (get_chunk(start, T=200)):
 """
 
 import os
-import tempfile  # used in compute_features when use_text=True
 
 import numpy as np
 
@@ -85,50 +84,26 @@ class BCDataSample:
         os.makedirs(out_dir, exist_ok=True)
         return cls(os.path.join(out_dir, f"{rec_id}.npz"))
 
-    def save_from_features(
-        self,
-        ram: np.ndarray,
-        dpad: np.ndarray,
-        button: np.ndarray,
-        extra: dict | None = None,
-    ) -> str:
+    def save_from_features(self, ram: np.ndarray, dpad: np.ndarray, button: np.ndarray) -> str:
         """Persist RAM snapshots plus action labels. Returns output path."""
-        arrays = {} if extra is None else dict(extra)
-        arrays.update(ram=ram, dpad=dpad, button=button)
-        np.savez(self.features_path, **arrays)
+        np.savez(self.features_path, ram=ram, dpad=dpad, button=button)
         return self.features_path
 
-    def compute_features(
-        self,
-        npz_path: str,
-        use_text: bool = False,
-        device: str = "cuda",
-    ) -> str:
-        """Step the emulator, collect RAM snapshots per step, save features.
+    def replay_arrays(self, npz_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Replay the emulator and return (ram, dpad, button) arrays without saving.
 
-        Saves bc_features.npz with:
-            ram    : uint8   (N, 2048)
-            dpad   : int8    (N,)
-            button : int8    (N,)
-            text   : float16 (N, 1, 768)   only present if use_text=True
-
-        Returns the path to the saved file.
+        Raises AssertionError if the trace ends in 'lose'.
         """
         import stable_retro as retro
         from contra.replay import rewind_state, step_env, GAME, SKIP
         from contra.events import EV_LEVELUP, EV_GAME_CLEAR
 
-        out_path = self.features_path
-        if os.path.isfile(out_path):
-            print(f"  {self.uuid}: already exists, skipping")
-            return out_path
-
         npz_data    = np.load(npz_path, allow_pickle=True)
         raw_actions = npz_data["actions"]                          # (N, 9) uint8
         N           = len(raw_actions)
 
-        dpad   = np.empty(N, dtype=np.int8)
-        button = np.empty(N, dtype=np.int8)
+        dpad    = np.empty(N, dtype=np.int8)
+        button  = np.empty(N, dtype=np.int8)
         ram_buf = []                                               # list of (2048,) uint8
 
         env = retro.make(
@@ -145,31 +120,21 @@ class BCDataSample:
         ram_buf.append(env.unwrapped.get_ram().copy())             # ram[0]: initial state
         leveled_up   = False
         game_cleared = False
-        raw_frames   = None
-
-        if use_text:
-            raw_frames = [env.em.get_screen().copy()]              # for video annotation
 
         for i, act in enumerate(raw_actions):
             act_arr   = np.asarray(act, dtype=np.uint8)
             pre_ram   = env.unwrapped.get_ram().copy()
             cur_state = env.em.get_state()
 
-            # Apply original action
-            for j in range(SKIP):
-                obs, _, _, _, _ = env.step(act_arr.copy())
-                if use_text and j == 0:
-                    raw_frames.append(obs.copy())
+            for _ in range(SKIP):
+                env.step(act_arr.copy())
             ram_orig  = env.unwrapped.get_ram().copy()
             next_orig = env.em.get_state()
 
-            # Test NOOP from same state
             rewind_state(env, cur_state)
             step_env(env, _NOOP)
             ram_noop = env.unwrapped.get_ram().copy()
 
-            # If action had no effect, label as no-op (env stays in noop state)
-            # If effective, rewind to original progression
             if np.array_equal(ram_orig, ram_noop):
                 dpad[i], button[i] = encode(_nes_keys(_NOOP))
             else:
@@ -190,37 +155,16 @@ class BCDataSample:
         assert outcome != "lose", \
             f"{self.uuid}: replay ended in 'lose' — skipping feature computation"
 
-        # ram_buf has N+1 entries; drop the final one so ram[i] aligns with action[i]
         ram = np.stack(ram_buf[:-1], axis=0)                      # (N, 2048) uint8
+        return ram, dpad, button
 
-        # --- Text annotation ---
-        extra = {}
-        if use_text:
-            from contra.replay import save_video
-            from annotate.get_text_annotation import annotate_video, _get_gemma_st
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError("Set GEMINI_API_KEY environment variable")
-            fps = int(npz_data.get("fps", 20))
-
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-                video_path = f.name
-            try:
-                save_video(np.stack(raw_frames), video_path)
-                _, macros = annotate_video(video_path, api_key, fps)
-            finally:
-                os.unlink(video_path)
-
-            text  = np.zeros((N, 1, 768), dtype=np.float16)
-            gemma = _get_gemma_st()
-            for macro in macros:
-                vec   = gemma.encode(macro["instruction"], convert_to_numpy=True)
-                start = macro["start_frame"] - 1
-                end   = macro["end_frame"] if macro["end_frame"] is not None else N
-                text[start:end] = vec.reshape(1, 768).astype(np.float16)
-            extra["text"] = text
-
-        return self.save_from_features(ram, dpad, button, extra)
+    def compute_features(self, npz_path: str) -> str:
+        """Replay the emulator and save features to disk. Returns output path."""
+        if os.path.isfile(self.features_path):
+            print(f"  {self.uuid}: already exists, skipping")
+            return self.features_path
+        ram, dpad, button = self.replay_arrays(npz_path)
+        return self.save_from_features(ram, dpad, button)
 
     @property
     def has_features(self) -> bool:

@@ -1,11 +1,22 @@
 """
-NES dataset: loads bc_features.npz recordings and returns fixed-length chunks.
+NES dataset: loads bc_features recordings and returns fixed-length chunks.
 
-Each recording contains bc_features.npz with:
-  ram    : uint8   (N, 2048)          NES RAM snapshot per step
-  dpad   : int8    (N,)               dpad class 0..8
-  button : int8    (N,)               button class 0..3
-  text   : float16 (N, 1, 768)        Gemma embedding (zeros if absent)
+Two storage formats are supported:
+
+  Individual npz (legacy):
+    data_root/
+      rec_0001.npz   # keys: ram (N,2048) uint8, dpad (N,) int8, button (N,) int8
+
+  Sharded npy (fast, mmap-able):
+    data_root/
+      shard_0000/
+        ram.npy      # (total_steps, 2048) uint8
+        dpad.npy     # (total_steps,) int8
+        button.npy   # (total_steps,) int8
+        index.npy    # (n_recs, 2) int64: (start_step, length) per recording
+
+  Pack shards with:
+    python annotate/gen_data.py pack <src_dir> --output-dir <shard_dir>
 
 Chunks are non-overlapping with stride=T. The final tail chunk is padded with
 the last RAM/action repeated, and a valid_mask marks the real frames.
@@ -14,7 +25,7 @@ A chunk of T consecutive steps yields:
   ram        : (T, 2048)  uint8
   dpad       : (T,)       int64,  0..8
   button     : (T,)       int64,  0..3
-  text       : (T, 1, 768) float32
+  text       : (T, 1, 768) float32   (zeros — text not used for RAM-only training)
   valid_mask : (T,)       bool    -- False for padding steps
 """
 
@@ -28,70 +39,126 @@ import torch
 from torch.utils.data import Dataset
 
 
-class Recording:
-    """Memory-mapped wrapper for one bc_features.npz recording."""
+# ---------------------------------------------------------------------------
+# Recording backends
+# ---------------------------------------------------------------------------
 
-    def __init__(self, features_path: str, n_text_tokens: int = 1):
+class Recording:
+    """Lazy-loading wrapper for one bc_features.npz recording.
+
+    Only the length is read at construction time; arrays are loaded from disk
+    on each get_chunk() call.  The OS page cache handles repeated access.
+    """
+
+    def __init__(self, features_path: str):
         self.path = features_path
         data = np.load(features_path)
-        self._ram    = torch.from_numpy(data["ram"].copy())                         # (N, 2048) uint8
-        self._dpad   = torch.from_numpy(data["dpad"].astype(np.int64))             # (N,)
-        self._button = torch.from_numpy(data["button"].astype(np.int64))           # (N,)
-        self._n      = len(self._dpad)
-
-        if "text" in data and n_text_tokens > 0:
-            self._text = torch.from_numpy(data["text"].astype(np.float32))[:, :n_text_tokens, :]
-        else:
-            self._text = torch.zeros(self._n, n_text_tokens, 768)
+        self._n = int(len(data["dpad"]))
+        data.close()
 
     def __len__(self) -> int:
         return self._n
 
     def get_chunk(self, start: int, length: int):
         valid_len = min(length, self._n - start)
+        sl = slice(start, start + valid_len)
 
-        ram    = self._ram[start:start + valid_len]
-        dpad   = self._dpad[start:start + valid_len]
-        button = self._button[start:start + valid_len]
-        text   = self._text[start:start + valid_len]
+        data   = np.load(self.path)
+        ram    = torch.from_numpy(data["ram"][sl].astype(np.uint8))
+        dpad   = torch.from_numpy(data["dpad"][sl].astype(np.int64))
+        button = torch.from_numpy(data["button"][sl].astype(np.int64))
+        data.close()
 
-        valid_mask = torch.zeros(length, dtype=torch.bool)
-        valid_mask[:valid_len] = True
+        return _pad_chunk(ram, dpad, button, valid_len, length)
 
-        if valid_len < length:
-            pad = length - valid_len
-            ram    = torch.cat([ram,    ram[-1:].expand(pad, -1)],              dim=0)
-            dpad   = torch.cat([dpad,   torch.zeros(pad, dtype=dpad.dtype)],    dim=0)
-            button = torch.cat([button, torch.zeros(pad, dtype=button.dtype)],  dim=0)
-            text   = torch.cat([text,   text[-1:].expand(pad, -1, -1)],         dim=0)
 
-        return ram, dpad, button, text, valid_mask
+class ShardRecording:
+    """One recording stored inside a mmap-able shard directory.
+
+    The shard's .npy arrays are memory-mapped: all DataLoader workers that
+    access the same shard share the OS page-cache pages, with zero per-worker
+    RAM overhead for the data itself.
+    """
+
+    def __init__(self, shard_ram: np.ndarray, shard_dpad: np.ndarray,
+                 shard_button: np.ndarray, start: int, length: int, name: str = ""):
+        self._ram    = shard_ram
+        self._dpad   = shard_dpad
+        self._button = shard_button
+        self._start  = start
+        self._n      = length
+        self.path    = name   # original filename — used for level detection in train.py
+
+    def __len__(self) -> int:
+        return self._n
+
+    def get_chunk(self, start: int, length: int):
+        valid_len = min(length, self._n - start)
+        abs_start = self._start + start
+        sl = slice(abs_start, abs_start + valid_len)
+
+        ram    = torch.from_numpy(self._ram[sl].astype(np.uint8))
+        dpad   = torch.from_numpy(self._dpad[sl].astype(np.int64))
+        button = torch.from_numpy(self._button[sl].astype(np.int64))
+
+        return _pad_chunk(ram, dpad, button, valid_len, length)
+
+
+def _pad_chunk(ram, dpad, button, valid_len, length):
+    valid_mask = torch.zeros(length, dtype=torch.bool)
+    valid_mask[:valid_len] = True
+
+    if valid_len < length:
+        pad = length - valid_len
+        ram    = torch.cat([ram,    ram[-1:].expand(pad, -1)],           dim=0)
+        dpad   = torch.cat([dpad,   torch.zeros(pad, dtype=dpad.dtype)], dim=0)
+        button = torch.cat([button, torch.zeros(pad, dtype=button.dtype)], dim=0)
+
+    return ram, dpad, button, valid_mask
+
+
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
+
+def _load_recordings(data_root: str) -> List:
+    """Auto-detect format and return a list of Recording or ShardRecording objects."""
+    shard_dirs = sorted(
+        os.path.join(data_root, d) for d in os.listdir(data_root)
+        if os.path.isdir(os.path.join(data_root, d)) and d.startswith("shard_")
+    )
+    if shard_dirs:
+        recordings = []
+        for shard_dir in shard_dirs:
+            ram    = np.load(os.path.join(shard_dir, "ram.npy"),    mmap_mode="r")
+            dpad   = np.load(os.path.join(shard_dir, "dpad.npy"),   mmap_mode="r")
+            button = np.load(os.path.join(shard_dir, "button.npy"), mmap_mode="r")
+            index  = np.load(os.path.join(shard_dir, "index.npy"))
+            names_path = os.path.join(shard_dir, "names.npy")
+            names  = np.load(names_path, allow_pickle=True) if os.path.exists(names_path) else [""] * len(index)
+            for (start, length), name in zip(index, names):
+                recordings.append(ShardRecording(ram, dpad, button, int(start), int(length), str(name)))
+        return recordings
+
+    npz_files = sorted(
+        os.path.join(data_root, f)
+        for f in os.listdir(data_root) if f.endswith(".npz")
+    )
+    if not npz_files:
+        raise FileNotFoundError(
+            f"No .npz files or shard_NNNN/ directories found in {data_root!r}"
+        )
+    return [Recording(p) for p in npz_files]
 
 
 class NESDataset(Dataset):
-    def __init__(self, data_root: str, n_steps: int = 200, n_text_tokens: int = 1):
-        """
-        Args:
-            data_root:     directory containing .npz recordings.
-            n_steps:       chunk length T.
-            n_text_tokens: number of text tokens to keep per step.
-        """
+    def __init__(self, data_root: str, n_steps: int = 200):
         self.n_steps = n_steps
-
-        npz_files = sorted([
-            os.path.join(data_root, f)
-            for f in os.listdir(data_root)
-            if f.endswith(".npz")
-        ])
-        if not npz_files:
-            raise FileNotFoundError(f"No .npz recordings found in {data_root!r}")
-
-        self.recordings: List[Recording] = [Recording(p, n_text_tokens=n_text_tokens) for p in npz_files]
+        self.recordings: List = _load_recordings(data_root)
         self._build_index(rng=None)
 
     @classmethod
-    def from_recordings(cls, recordings: List[Recording], n_steps: int) -> "NESDataset":
-        """Construct a dataset from an existing list of Recording objects (no file I/O)."""
+    def from_recordings(cls, recordings: List, n_steps: int) -> "NESDataset":
         obj = object.__new__(cls)
         obj.n_steps = n_steps
         obj.recordings = recordings
@@ -99,8 +166,6 @@ class NESDataset(Dataset):
         return obj
 
     def _build_index(self, rng: np.random.RandomState = None):
-        """Build chunk index. If rng is provided, each recording gets a random
-        start offset in [0, min(T-1, len-1)] before striding by T."""
         self._index = []
         for rec_idx, rec in enumerate(self.recordings):
             if rng is not None:
@@ -112,7 +177,6 @@ class NESDataset(Dataset):
                 self._index.append((rec_idx, start))
 
     def resample(self, rng: np.random.RandomState):
-        """Rebuild chunk boundaries with a new random jitter. Call at epoch start."""
         self._build_index(rng=rng)
 
     def __len__(self) -> int:

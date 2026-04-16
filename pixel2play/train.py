@@ -1,7 +1,7 @@
 import argparse
 import logging
 import os
-import re
+
 import random
 import time
 
@@ -53,8 +53,8 @@ class NESLightningModule(pl.LightningModule):
 
 
     def _step(self, batch):
-        ram, dpad, button, text, valid_mask = batch
-        dpad_logits, button_logits = self.model(ram, dpad, button, text)
+        ram, dpad, button, valid_mask = batch
+        dpad_logits, button_logits = self.model(ram, dpad, button)
         return self.model.loss(dpad_logits, button_logits, dpad, button, valid_mask)
 
     def training_step(self, batch, _):
@@ -87,36 +87,29 @@ class NESLightningModule(pl.LightningModule):
 # ---------------------------------------------------------------------------
 
 class NESDataModule(pl.LightningDataModule):
-    def __init__(self, data_root: str, n_steps: int, batch_size: int, val_fraction: float = 0.1, n_text_tokens: int = 1):
+    def __init__(self, data_root: str, n_steps: int, batch_size: int, n_val_recordings: int = 50,
+                 max_train_recordings: int = 0):
         super().__init__()
         self.data_root = data_root
         self.n_steps = n_steps
         self.batch_size = batch_size
-        self.val_fraction = val_fraction
-        self.n_text_tokens = n_text_tokens
+        self.n_val_recordings = n_val_recordings
+        self.max_train_recordings = max_train_recordings  # 0 = use all
 
     def setup(self, stage=None):
         self._epoch_counter = 0
-        full = NESDataset(self.data_root, n_steps=self.n_steps, n_text_tokens=self.n_text_tokens)
-
-        # Group recordings by level, then pick 1 val recording per level (stratified).
-        by_level: dict[str, list] = {}
-        for rec in full.recordings:
-            level = re.search(r"level\d+", os.path.basename(rec.path), re.IGNORECASE)
-            key = level.group(0).lower() if level else "unknown"
-            by_level.setdefault(key, []).append(rec)
+        full = NESDataset(self.data_root, n_steps=self.n_steps)
 
         rng = random.Random(42)
-        val_recs, train_recs = [], []
-        for level_key, recs in by_level.items():
-            shuffled = recs[:]
-            rng.shuffle(shuffled)
-            if level_key == "level1":
-                n_val = min(10, len(shuffled) - 1)
-            else:
-                n_val = 0
-            val_recs.extend(shuffled[:n_val])
-            train_recs.extend(shuffled[n_val:])
+        recs = full.recordings[:]
+        rng.shuffle(recs)
+        n_val = min(self.n_val_recordings, len(recs) - 1) if self.n_val_recordings > 0 else 0
+        val_recs   = recs[:n_val]
+        train_recs = recs[n_val:]
+
+        if self.max_train_recordings > 0:
+            train_recs = train_recs[:self.max_train_recordings]
+        print(f"Dataset: {len(train_recs)} train recordings, {len(val_recs)} val recordings")
 
         self.train_set = NESDataset.from_recordings(train_recs, self.n_steps)
         self.val_set   = NESDataset.from_recordings(val_recs,   self.n_steps)
@@ -127,10 +120,10 @@ class NESDataModule(pl.LightningDataModule):
         self._epoch_counter += 1
 
     def train_dataloader(self):
-        return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
+        return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, batch_size=self.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        return DataLoader(self.val_set, batch_size=self.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +147,11 @@ def main():
     parser.add_argument("--data_folder",    default=stage3["training_dataset"]["data_folder"])
     parser.add_argument("--checkpoint_dir", default=CHECKPOINT_DIR)
     parser.add_argument("--exp_name",       default=None, help="Experiment name, used as checkpoint subdirectory")
-    parser.add_argument("--fast_dev_run",   action="store_true")
+    parser.add_argument("--fast_dev_run",            action="store_true")
+    parser.add_argument("--no_compile",              action="store_true",
+                        help="Skip torch.compile() — faster startup, slower throughput. Useful for quick overfit experiments.")
+    parser.add_argument("--max_train_recordings",    type=int, default=0,
+                        help="Limit training set size (0 = use all). Use a small number to find the overfit point.")
     args = parser.parse_args()
 
     torch.set_float32_matmul_precision("high")
@@ -165,14 +162,11 @@ def main():
     max_epochs             = stage3.get("n_epochs", 5)
     accumulate_grad_batches = stage3.get("accumulate_grad_batches", 1)
 
-    n_text_tokens = shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0]
-
     pm      = cfg.get("policy_model", {})
     dec     = pm.get("action_decoder", {})
     dropout = pm.get("dropout", 0.0)
     backbone_cfg = BackboneConfig(
         n_steps=n_steps,
-        n_text_tokens=n_text_tokens,
         dim=pm.get("transformer_dim", 1024),
         n_layers=pm.get("n_transformer_layers", 10),
         n_q_heads=pm.get("n_q_head", 16),
@@ -189,27 +183,42 @@ def main():
         data_root=args.data_folder,
         n_steps=n_steps,
         batch_size=batch_size,
-        n_text_tokens=n_text_tokens,
+        n_val_recordings=stage3.get("n_val_recordings", 50),
+        max_train_recordings=args.max_train_recordings,
     )
 
     weight_decay = stage3["optim"]["weight_decay"]
     module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout, weight_decay=weight_decay)
-    module.model = torch.compile(module.model)
+    if not args.no_compile:
+        module.model = torch.compile(module.model)
 
-    from lightning.pytorch.callbacks import ModelCheckpoint, ThroughputMonitor
+    from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, ThroughputMonitor
+    from lightning.pytorch.loggers import TensorBoardLogger
 
     ckpt_dir = os.path.join(args.checkpoint_dir, args.exp_name) if args.exp_name else args.checkpoint_dir
+    has_val = datamodule.n_val_recordings > 0
     checkpoint_cb = ModelCheckpoint(
         dirpath=ckpt_dir,
-        filename="last",
+        filename="best",
+        monitor="val/loss" if has_val else None,
         save_top_k=1,
+        mode="min",
         enable_version_counter=False,
     )
-    # batch: (ram, dpad, button, text, valid_mask); ram shape: (B, T, 2048)
+    early_stop_cb = EarlyStopping(
+        monitor="val/loss",
+        patience=stage3.get("early_stop_patience", 5),
+        mode="min",
+    )
+    # batch: (ram, dpad, button, valid_mask); ram shape: (B, T, 2048)
     throughput_cb = ThroughputMonitor(
         batch_size_fn=lambda batch: batch[0].shape[0],
         length_fn=lambda batch: batch[0].shape[0] * batch[0].shape[1],
     )
+
+    callbacks = [checkpoint_cb, throughput_cb]
+    if has_val:
+        callbacks.append(early_stop_cb)
 
     trainer = pl.Trainer(
         accelerator="auto",
@@ -218,9 +227,10 @@ def main():
         accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=1,
         precision="bf16-mixed",
-        callbacks=[checkpoint_cb, throughput_cb],
+        callbacks=callbacks,
         fast_dev_run=args.fast_dev_run,
         default_root_dir="tmp",
+        logger=TensorBoardLogger("tmp/lightning_logs", name=args.exp_name or "default", version=0),
     )
 
     trainer.fit(module, datamodule)

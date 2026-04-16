@@ -2,17 +2,17 @@
 PolicyCausalTransformer: the core backbone for pixel-to-play.
 
 Per-timestep token layout (one_step tokens):
-  [text_0] [img_0] [think_0] [action_out] [action_0 .. action_{N-1}]
-   ──────── ──────── ─────────  ─────────── ──────────────────────────
-   n_text   n_img   n_think       1                  N (real actions)
+  [img_0] [think_0] [action_out] [action_0 .. action_{N-1}]
+   ─────── ─────────  ─────────── ──────────────────────────
+   n_img   n_think       1                  N (real actions)
 
 T timesteps are concatenated, giving a sequence of T * one_step tokens.
 The flex_attention block mask implements the causal cross-step and within-step rules:
   - All tokens see all non-action_out tokens from strictly past steps.
   - Within the same step:
-      text/img/think → attend to each other (fully bidirectional)
-      action_out     → attend to text/img/think + itself
-      real_action    → attend to text/img/think + all prior real_action tokens
+      img/think  → attend to each other (fully bidirectional)
+      action_out → attend to img/think + itself
+      real_action → attend to img/think + all prior real_action tokens
 """
 
 from dataclasses import dataclass
@@ -44,9 +44,6 @@ class BackboneConfig:
     n_action_tokens: int = 2        # NES: dpad + buttons
     # RAM
     ram_size: int = 2048
-    # Text
-    n_text_tokens: int = 1
-    text_embed_dim: int = 768
     # Flex-attention block size
     mask_block_size: int = 128
     # Attention history per layer (length must equal n_layers)
@@ -68,7 +65,6 @@ class BackboneConfig:
 
 def _build_causal_mask_fn(
     n_img: int,
-    n_text: int,
     n_think: int,
     n_action: int,
     history_steps: int,
@@ -77,15 +73,15 @@ def _build_causal_mask_fn(
     Returns a flex_attention mask_mod function for one layer.
 
     Token layout per step (length = one_step):
-      [text × n_text | img × n_img | think × n_think | action_out × 1 | real_action × n_action]
+      [img × n_img | think × n_think | action_out × 1 | real_action × n_action]
 
     Indices within one step:
-      text/img/think:  [0, token_to_action_out)
-      action_out:      [token_to_action_out]
-      real_action:     (token_to_action_out, one_step)
+      img/think:   [0, token_to_action_out)
+      action_out:  [token_to_action_out]
+      real_action: (token_to_action_out, one_step)
     """
-    one_step = n_text + n_img + n_think + 1 + n_action
-    token_to_action_out = n_text + n_img + n_think     # first index of action_out slot
+    one_step = n_img + n_think + 1 + n_action
+    token_to_action_out = n_img + n_think
 
     def mask_mod(b, h, q_idx, kv_idx):
         q_pos = q_idx % one_step
@@ -99,16 +95,13 @@ def _build_causal_mask_fn(
 
         k_is_context = k_pos < token_to_action_out
         k_is_action_out = k_pos == token_to_action_out
-        k_is_real_action = k_pos > token_to_action_out
 
         past = k_step < q_step
         same = k_step == q_step
         in_history = (q_step - k_step) <= history_steps
 
-        # Past steps: any query attends to any non-action_out KV
         from_past = past & ~k_is_action_out & in_history
 
-        # Same step rules
         same_context_to_context = same & q_is_context & k_is_context
         same_action_out_to_context_or_self = same & q_is_action_out & (k_is_context | k_is_action_out)
         same_real_action_to_non_action_out = same & q_is_real_action & ~k_is_action_out
@@ -133,7 +126,7 @@ class PolicyCausalTransformer(nn.Module):
         self.n_img = self.ram_tokenizer.n_img_tokens()
 
         # Sequence geometry
-        self.one_step = self.n_img + cfg.n_text_tokens + cfg.n_thinking_tokens + 1 + cfg.n_action_tokens
+        self.one_step = self.n_img + cfg.n_thinking_tokens + 1 + cfg.n_action_tokens
         self.max_seq_len = self.one_step * cfg.n_steps
 
         # Backbone transformer
@@ -155,24 +148,17 @@ class PolicyCausalTransformer(nn.Module):
             n_heads=cfg.dec_n_heads,
         )
 
-        # Text projection
-        self.text_proj = nn.Linear(cfg.text_embed_dim, D, bias=False)
-        # Learned "no text" embedding for timesteps without a text annotation
-        self.no_text_embed = nn.Parameter(torch.empty(1, cfg.n_text_tokens, D, dtype=torch.bfloat16))
-        nn.init.normal_(self.no_text_embed, std=0.05)
-
         # Learned positional tokens (added to each token type)
         std = 0.05
-        self.img_pos    = nn.Parameter(torch.empty(1, self.n_img,              D, dtype=torch.bfloat16))
-        self.text_pos   = nn.Parameter(torch.empty(1, cfg.n_text_tokens,       D, dtype=torch.bfloat16))
-        self.think_pos  = nn.Parameter(torch.empty(1, cfg.n_thinking_tokens,   D, dtype=torch.bfloat16))
-        self.action_out_token = nn.Parameter(torch.empty(1, 1,                 D, dtype=torch.bfloat16))
-        self.action_pos = nn.Parameter(torch.empty(1, cfg.n_action_tokens,     D, dtype=torch.bfloat16))
-        for p in [self.img_pos, self.text_pos, self.think_pos, self.action_out_token, self.action_pos]:
+        self.img_pos          = nn.Parameter(torch.empty(1, self.n_img,            D, dtype=torch.bfloat16))
+        self.think_pos        = nn.Parameter(torch.empty(1, cfg.n_thinking_tokens, D, dtype=torch.bfloat16))
+        self.action_out_token = nn.Parameter(torch.empty(1, 1,                     D, dtype=torch.bfloat16))
+        self.action_pos       = nn.Parameter(torch.empty(1, cfg.n_action_tokens,   D, dtype=torch.bfloat16))
+        for p in [self.img_pos, self.think_pos, self.action_out_token, self.action_pos]:
             nn.init.normal_(p, std=std)
 
         # Pre-compute which positions in the flat sequence are action_out tokens
-        action_out_offset = cfg.n_text_tokens + self.n_img + cfg.n_thinking_tokens  # within one step
+        action_out_offset = self.n_img + cfg.n_thinking_tokens  # within one step
         action_out_idx = torch.tensor([
             i * self.one_step + action_out_offset for i in range(cfg.n_steps)
         ], dtype=torch.long)
@@ -191,7 +177,6 @@ class PolicyCausalTransformer(nn.Module):
             history = cfg.attention_history_len[i]
             mask_fn = _build_causal_mask_fn(
                 n_img=self.n_img,
-                n_text=cfg.n_text_tokens,
                 n_think=cfg.n_thinking_tokens,
                 n_action=cfg.n_action_tokens,
                 history_steps=history,
@@ -217,57 +202,40 @@ class PolicyCausalTransformer(nn.Module):
     def _build_sequence(
         self,
         img: torch.Tensor,          # (B, T, n_img, D)
-        text: torch.Tensor,         # (B, T, n_text, D)  already projected
         action_in: torch.Tensor,    # (B, T, n_action, D)
     ) -> torch.Tensor:
         B = img.size(0)
-        think = self.think_pos.expand(B, -1, -1)           # (B, n_think, D)
+        think = self.think_pos.expand(B, -1, -1)              # (B, n_think, D)
         action_out = self.action_out_token.expand(B, -1, -1)  # (B, 1, D)
 
         steps = []
         for t in range(self.cfg.n_steps):
             step = torch.cat([
-                text[:, t] + self.text_pos,
                 img[:, t]  + self.img_pos,
                 think,
                 action_out,
                 action_in[:, t] + self.action_pos,
-            ], dim=1)                                       # (B, one_step, D)
+            ], dim=1)                                         # (B, one_step, D)
             steps.append(step)
 
-        return torch.cat(steps, dim=1)                      # (B, max_seq_len, D)
+        return torch.cat(steps, dim=1)                        # (B, max_seq_len, D)
 
     def _encode(
         self,
-        ram: torch.Tensor,
-        action_embeddings_in: torch.Tensor,
-        text_tokens_embed: torch.Tensor,
+        ram: torch.Tensor,                  # (B, T, 2048)
+        action_embeddings_in: torch.Tensor, # (B, T, n_action, D)
     ) -> torch.Tensor:
         """Run RAM encoding + backbone transformer. Returns action_out_tokens (B, T, D)."""
-        B, T = ram.shape[:2]
-
-        img_tokens = self.ram_tokenizer(ram)  # (B, T, 1, D)
-
-        text = self.text_proj(text_tokens_embed)
-        if self.cfg.n_text_tokens > 0:
-            is_zero = ~text.reshape(B * T, -1).any(dim=-1)
-            text_bt = text.reshape(B * T, self.cfg.n_text_tokens, -1)
-            text = torch.where(
-                is_zero.view(B * T, 1, 1),
-                self.no_text_embed,
-                text_bt,
-            ).reshape(B, T, self.cfg.n_text_tokens, text.size(-1))
-
-        x = self._build_sequence(img_tokens, text, action_embeddings_in)
+        img_tokens = self.ram_tokenizer(ram)  # (B, T, n_img, D)
+        x = self._build_sequence(img_tokens, action_embeddings_in)
         y = self.transformer(x)
         return y[:, self.action_out_idx, :]   # (B, T, D)
 
     def forward(
         self,
-        ram: torch.Tensor,                       # (B, T, 2048)
-        action_embeddings_in: torch.Tensor,      # (B, T, N, D)
-        text_tokens_embed: torch.Tensor,         # (B, T, n_text, text_dim)
+        ram: torch.Tensor,                   # (B, T, 2048)
+        action_embeddings_in: torch.Tensor,  # (B, T, N, D)
     ) -> torch.Tensor:
         """Returns action_out: (B, T, N, D)."""
-        action_out_tokens = self._encode(ram, action_embeddings_in, text_tokens_embed)
+        action_out_tokens = self._encode(ram, action_embeddings_in)
         return self.action_decoder(action_out_tokens, action_embeddings_in)

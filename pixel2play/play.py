@@ -36,7 +36,7 @@ from pixel2play.train import NESLightningModule
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 GAME              = "Contra-Nes"
-SPREAD_STATES_DIR = os.path.join(os.path.dirname(__file__), "../contra/spread_gun_states")
+SPREAD_STATES_DIR = os.path.join(os.path.dirname(__file__), "../contra/integration/Contra-Nes/spread_gun_state")
 
 RAM_SIZE = 2048  # NES RAM bytes
 EMU_SKIP = 3     # env steps per agent step (20 Hz agent @ 60 Hz NES)
@@ -61,6 +61,33 @@ def _xscroll(ram: np.ndarray) -> int:
 
 # ── Model loading ─────────────────────────────────────────────────────────────
 
+def _infer_backbone_cfg(state_dict: dict) -> BackboneConfig:
+    """Infer BackboneConfig from checkpoint state dict keys/shapes."""
+    import re as _re
+
+    dim = state_dict["model.dpad_embed.weight"].shape[1]
+
+    layer_re = _re.compile(r"model\.backbone\.transformer\.layers\.(\d+)\.")
+    n_layers = max(
+        (int(m.group(1)) for k in state_dict for m in [layer_re.match(k)] if m),
+        default=9,
+    ) + 1
+
+    dec_re = _re.compile(r"model\.backbone\.action_decoder\.transformer\.layers\.(\d+)\.")
+    dec_n_layers = max(
+        (int(m.group(1)) for k in state_dict for m in [dec_re.match(k)] if m),
+        default=2,
+    ) + 1
+
+    return BackboneConfig(
+        dim=dim,
+        n_layers=n_layers,
+        dec_n_layers=dec_n_layers,
+        n_steps=200,
+        dropout=0.0,
+    )
+
+
 def load_model(checkpoint_path: str, device: torch.device, config_path: Optional[str] = None) -> NESPolicyModel:
     if config_path is not None:
         import yaml
@@ -83,12 +110,19 @@ def load_model(checkpoint_path: str, device: torch.device, config_path: Optional
             dec_n_layers=dec.get("n_layers", 3),
             dec_n_heads=dec.get("n_heads", 8),
         )
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        state_dict = ckpt["state_dict"]
     else:
-        backbone_cfg = BackboneConfig(n_steps=200, n_text_tokens=0, dropout=0.0)
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        state_dict = ckpt["state_dict"]
+        # torch.compile() adds '_orig_mod.' to keys — strip it if present
+        state_dict = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
+        backbone_cfg = _infer_backbone_cfg(state_dict)
+        print(f"  Inferred config: dim={backbone_cfg.dim}  n_layers={backbone_cfg.n_layers}"
+              f"  dec_n_layers={backbone_cfg.dec_n_layers}  n_action_tokens={backbone_cfg.n_action_tokens}")
+
     module = NESLightningModule(backbone_cfg, lr=1e-4)
 
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    state_dict = ckpt["state_dict"]
     # torch.compile() adds '_orig_mod.' to keys — strip it if present
     fixed = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
     module.load_state_dict(fixed, strict=True)
@@ -101,26 +135,39 @@ def load_model(checkpoint_path: str, device: torch.device, config_path: Optional
 # ── Environment setup ─────────────────────────────────────────────────────────
 
 def make_env(level: str):
+    # Normalize e.g. "level5" → "Level5"
+    if level and level[0].islower():
+        level = level.capitalize()
     env = retro.make(
-        game=GAME, state=level,
+        game=GAME, state=retro.State.NONE,
         use_restricted_actions=retro.Actions.ALL,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
-    obs, _ = env.reset()
+    env.reset()
 
-    if level != "Level1":
-        path = os.path.join(SPREAD_STATES_DIR, f"{level}.state")
-        for opener in (gzip.open, open):
-            try:
-                with opener(path, "rb") as f:
-                    state_bytes = f.read()
-                env.initial_state = state_bytes
-                obs, _ = env.reset()
-                break
-            except OSError:
-                continue
+    if level == "Level1":
+        state_path = os.path.join(
+            os.path.dirname(__file__), "..", "contra", "integration", "Contra-Nes", "Level1.state"
+        )
+    else:
+        state_path = os.path.join(SPREAD_STATES_DIR, f"{level}.state")
+
+    state_bytes = None
+    for opener in (gzip.open, open):
+        try:
+            with opener(state_path, "rb") as f:
+                state_bytes = f.read()
+            break
+        except OSError:
+            continue
+    if state_bytes is None:
+        raise FileNotFoundError(f"Could not load state file: {state_path}")
+
+    env.em.set_state(state_bytes)
+    env.data.update_ram()
+    obs = env.em.get_screen().copy()
 
     initial_state = env.em.get_state()
     return env, obs, initial_state
@@ -150,14 +197,12 @@ def run_episode(
         device = next(model.parameters()).device
 
     ctx_len  = model.backbone.cfg.n_steps
-    n_text   = model.backbone.cfg.n_text_tokens
 
     env, _, initial_state = make_env(level)
 
     ram_buf    = torch.zeros(ctx_len, RAM_SIZE, dtype=torch.uint8)
     dpad_buf   = torch.zeros(ctx_len, dtype=torch.long)
     button_buf = torch.zeros(ctx_len, dtype=torch.long)
-    text_buf   = torch.zeros(ctx_len, n_text, 768)
     buf_len    = 0
 
     recorded_actions: list[np.ndarray] = []
@@ -181,8 +226,7 @@ def run_episode(
             button_buf[-1] = 0
             pos = ctx_len - 1
 
-        ram_d  = ram_buf.unsqueeze(0).to(device)                 # (1, ctx_len, 2048)
-        text_d = text_buf.unsqueeze(0).to(device)
+        ram_d = ram_buf.unsqueeze(0).to(device)                  # (1, ctx_len, 2048)
 
         # Backbone: one pass
         with torch.no_grad():
@@ -190,7 +234,6 @@ def run_episode(
                 ram_d,
                 dpad_buf.unsqueeze(0).to(device),
                 button_buf.unsqueeze(0).to(device),
-                text_d,
             )
 
         # ActionDecoder pass 1: dpad

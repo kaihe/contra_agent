@@ -5,45 +5,21 @@ import sys
 
 import numpy as np
 
-from annotate import BCDataSample
+from annotate.instance import BCDataSample
 
 
-def _worker(args: tuple) -> tuple[str, str | None]:
-    """Process one recording in a subprocess. Returns (npz_path, error_msg or None)."""
-    npz_path, use_text, out_dir = args
-
-    data   = np.load(npz_path, allow_pickle=True)
-    game   = str(data["game"]) if "game" in data else "Contra-Nes"
-    sample = BCDataSample.create(npz_path, game, out_dir=out_dir)
-
-    if sample.has_features:
-        return npz_path, None
-
+def _worker(npz_path: str) -> tuple:
+    """Replay one mc_trace in a subprocess. Returns (npz_path, ram, dpad, button, err)."""
     try:
-        sample.compute_features(npz_path, use_text=use_text)
-        return npz_path, None
+        ram, dpad, button = BCDataSample(npz_path).replay_arrays(npz_path)
+        return npz_path, ram, dpad, button, None
     except AssertionError as e:
-        return npz_path, str(e)
+        return npz_path, None, None, None, str(e)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Convert NPZ recording(s) to bc_features.npz training format."
-    )
-    parser.add_argument("source", nargs="+", help="Path(s) to .npz file(s), a folder, or a glob pattern")
-    parser.add_argument("--use-text", action="store_true",
-                        help="Run Gemini annotation and embed text with Gemma")
-    parser.add_argument("--workers", type=int, default=8,
-                        help="Number of parallel worker processes (default: 8)")
-    parser.add_argument("--output-dir", default=None,
-                        help="Directory to write output .npz files (default: annotate/bc_data/<game>)")
-    args = parser.parse_args()
-
-    use_text = args.use_text
-    out_dir  = args.output_dir
-
+def _collect_npz(sources: list[str]) -> list[str]:
     npz_paths = []
-    for src in args.source:
+    for src in sources:
         src = src.rstrip("/\\")
         if os.path.isfile(src) and src.endswith(".npz"):
             npz_paths.append(src)
@@ -59,34 +35,86 @@ def main():
             if not found:
                 sys.exit(f"Error: {src!r} is not a .npz file, a folder, or a valid glob pattern")
             npz_paths.extend(found)
-    npz_paths = sorted(set(npz_paths))
+    return sorted(set(npz_paths))
+
+
+def _write_shard(shard_dir: str, rams, dpads, buttons, names):
+    os.makedirs(shard_dir, exist_ok=True)
+    index = np.array(
+        [(sum(len(d) for d in dpads[:i]), len(dpads[i])) for i in range(len(dpads))],
+        dtype=np.int64,
+    )
+    np.save(os.path.join(shard_dir, "ram.npy"),    np.concatenate(rams,    axis=0))
+    np.save(os.path.join(shard_dir, "dpad.npy"),   np.concatenate(dpads,   axis=0))
+    np.save(os.path.join(shard_dir, "button.npy"), np.concatenate(buttons, axis=0))
+    np.save(os.path.join(shard_dir, "index.npy"),  index)
+    np.save(os.path.join(shard_dir, "names.npy"),  np.array(names, dtype=object))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Convert mc_traces to mmap-able shards for fast DataLoader access"
+    )
+    parser.add_argument("source", nargs="+",
+                        help="mc_trace .npz files, directories, or globs")
+    parser.add_argument("--output-dir", required=True,
+                        help="Directory to write shard_NNNN/ subdirectories")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Parallel workers for emulator replay (default: 8)")
+    parser.add_argument("--shard-size", type=int, default=256,
+                        help="Number of recordings per shard (default: 256)")
+    args = parser.parse_args()
 
     from tqdm import tqdm
 
-    worker_args = [
-        (p, use_text, out_dir)
-        for p in npz_paths
-    ]
+    npz_paths = _collect_npz(args.source)
+    if not npz_paths:
+        sys.exit("No .npz files found.")
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    print(f"Replaying {len(npz_paths)} mc_traces → {args.output_dir}")
+
+    shard_idx = 0
+    rams, dpads, buttons, names = [], [], [], []
+
+    def _flush():
+        nonlocal shard_idx, rams, dpads, buttons, names
+        shard_dir = os.path.join(args.output_dir, f"shard_{shard_idx:04d}")
+        _write_shard(shard_dir, rams, dpads, buttons, names)
+        shard_idx += 1
+        rams, dpads, buttons, names = [], [], [], []
+
+    def _handle(npz_path, ram, dpad, button, err):
+        if err:
+            tqdm.write(f"  Deleting bad trace: {os.path.basename(npz_path)} ({err})")
+            os.remove(npz_path)
+            return
+        rams.append(ram)
+        dpads.append(dpad)
+        buttons.append(button)
+        names.append(os.path.basename(npz_path))
+        if len(rams) == args.shard_size:
+            _flush()
 
     if args.workers == 1:
-        for wa in tqdm(worker_args, desc="gen_data", unit="rec"):
-            npz_path, err = _worker(wa)
-            if err:
-                tqdm.write(f"  Deleting bad trace: {os.path.basename(npz_path)} ({err})")
-                os.remove(npz_path)
+        for npz_path in tqdm(npz_paths, desc="pack", unit="rec"):
+            _handle(*_worker(npz_path))
     else:
         import multiprocessing as mp
         ctx = mp.get_context("spawn")
         with ctx.Pool(args.workers) as pool:
-            for npz_path, err in tqdm(
-                pool.imap_unordered(_worker, worker_args),
-                total=len(worker_args),
-                desc="gen_data",
+            for result in tqdm(
+                pool.imap_unordered(_worker, npz_paths),
+                total=len(npz_paths),
+                desc="pack",
                 unit="rec",
             ):
-                if err:
-                    tqdm.write(f"  Deleting bad trace: {os.path.basename(npz_path)} ({err})")
-                    os.remove(npz_path)
+                _handle(*result)
+
+    if rams:
+        _flush()
+
+    print(f"Done. {shard_idx} shards → load with NESDataset('{args.output_dir}', sharded=True)")
 
 
 if __name__ == "__main__":
