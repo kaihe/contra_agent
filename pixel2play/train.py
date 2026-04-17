@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from pixel2play.dataset import NESDataset
 from pixel2play.model.backbone import BackboneConfig
+from pixel2play.model.nes_actions import N_BUTTONS
 from pixel2play.model.nes_policy import NESPolicyModel
 
 CHECKPOINT_DIR = "tmp/checkpoints/nes_policy"
@@ -54,8 +55,9 @@ class NESLightningModule(pl.LightningModule):
 
     def _step(self, batch):
         ram, dpad, button, valid_mask = batch
-        dpad_logits, button_logits = self.model(ram, dpad, button)
-        return self.model.loss(dpad_logits, button_logits, dpad, button, valid_mask)
+        action = dpad * N_BUTTONS + button
+        action_logits = self.model(ram, action)
+        return self.model.loss(action_logits, action, valid_mask)
 
     def training_step(self, batch, _):
         loss = self._step(batch)
@@ -163,7 +165,6 @@ def main():
     accumulate_grad_batches = stage3.get("accumulate_grad_batches", 1)
 
     pm      = cfg.get("policy_model", {})
-    dec     = pm.get("action_decoder", {})
     dropout = pm.get("dropout", 0.0)
     backbone_cfg = BackboneConfig(
         n_steps=n_steps,
@@ -175,8 +176,6 @@ def main():
         mask_block_size=pm.get("mask_block_size", 128),
         attention_history_len=pm.get("attention_history_len", None),
         dropout=pm.get("dropout", 0.0),
-        dec_n_layers=dec.get("n_layers", 3),
-        dec_n_heads=dec.get("n_heads", 8),
     )
 
     datamodule = NESDataModule(

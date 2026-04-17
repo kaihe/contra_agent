@@ -1,15 +1,14 @@
 """
-NESPolicyModel: backbone + NES-specific action heads.
+NESPolicyModel: backbone + single combined action head.
 
 Input  (per step):
-  ram     (B, T, 2048)  – NES RAM snapshot
-  dpad    (B, T)        – ground-truth dpad class (teacher forcing)
-  button  (B, T)        – ground-truth button class (teacher forcing)
+  ram    (B, T, 2048)  – NES RAM snapshot
+  action (B, T)        – ground-truth combined action class (teacher forcing)
+                         action = dpad * N_BUTTONS + button  ∈ [0, N_ACTIONS)
 
 Output:
-  dpad_logits   (B, T, N_DPAD)    – 9 class scores
-  button_logits (B, T, N_BUTTONS) – 4 class scores
-  loss          scalar            – normalised cross-entropy
+  action_logits (B, T, N_ACTIONS) – 36 class scores
+  loss          scalar             – normalised cross-entropy
 """
 
 import math
@@ -19,77 +18,51 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pixel2play.model.backbone import BackboneConfig, PolicyCausalTransformer
-from pixel2play.model.nes_actions import N_BUTTONS, N_DPAD
+from pixel2play.model.nes_actions import N_ACTIONS
 
 
 class NESPolicyModel(nn.Module):
     def __init__(self, cfg: BackboneConfig):
         super().__init__()
         D = cfg.dim
-        assert cfg.n_action_tokens == 2, "NES uses 2 action tokens: dpad + button"
-
         self.backbone = PolicyCausalTransformer(cfg)
 
-        # Action input embeddings (teacher forcing)
-        self.dpad_embed   = nn.Embedding(N_DPAD,    D, dtype=torch.bfloat16)
-        self.button_embed = nn.Embedding(N_BUTTONS, D, dtype=torch.bfloat16)
-        nn.init.normal_(self.dpad_embed.weight,   std=0.1)
-        nn.init.normal_(self.button_embed.weight, std=0.1)
+        # Single combined action embedding (teacher forcing input)
+        self.action_embed = nn.Embedding(N_ACTIONS, D, dtype=torch.bfloat16)
+        nn.init.normal_(self.action_embed.weight, std=0.1)
 
-        # Output heads
-        self.dpad_head   = nn.Linear(D, N_DPAD)
-        self.button_head = nn.Linear(D, N_BUTTONS)
+        # Single output head
+        self.action_head = nn.Linear(D, N_ACTIONS)
 
-    def _action_in(self, dpad: torch.Tensor, button: torch.Tensor) -> torch.Tensor:
-        return torch.stack([self.dpad_embed(dpad), self.button_embed(button)], dim=2)
+    def _action_in(self, action: torch.Tensor) -> torch.Tensor:
+        # (B, T) → (B, T, 1, D)
+        return self.action_embed(action).unsqueeze(2)
 
     def encode(
         self,
         ram: torch.Tensor,    # (B, T, 2048)
-        dpad: torch.Tensor,   # (B, T)  int64
-        button: torch.Tensor, # (B, T)  int64
+        action: torch.Tensor, # (B, T)  int64
     ) -> torch.Tensor:
         """Run the backbone transformer only. Returns action_out_tokens (B, T, D)."""
-        return self.backbone._encode(ram, self._action_in(dpad, button))
-
-    def decode(
-        self,
-        action_out_tokens: torch.Tensor,  # (B, T, D)  – cached from encode()
-        dpad: torch.Tensor,               # (B, T)  int64
-        button: torch.Tensor,             # (B, T)  int64
-    ):
-        """Run only the ActionDecoder on cached backbone features.
-        Returns (dpad_logits (B,T,N_DPAD), button_logits (B,T,N_BUTTONS))."""
-        action_out = self.backbone.action_decoder(action_out_tokens, self._action_in(dpad, button))
-        return self.dpad_head(action_out[:, :, 0, :]), self.button_head(action_out[:, :, 1, :])
+        return self.backbone._encode(ram, self._action_in(action))
 
     def forward(
         self,
         ram: torch.Tensor,    # (B, T, 2048)
-        dpad: torch.Tensor,   # (B, T)  int64
-        button: torch.Tensor, # (B, T)  int64
-    ):
-        action_in = torch.stack([
-            self.dpad_embed(dpad),
-            self.button_embed(button),
-        ], dim=2)
-
-        action_out = self.backbone(ram, action_in)
-
-        dpad_logits   = self.dpad_head(action_out[:, :, 0, :])
-        button_logits = self.button_head(action_out[:, :, 1, :])
-
-        return dpad_logits, button_logits
+        action: torch.Tensor, # (B, T)  int64
+    ) -> torch.Tensor:
+        """Returns action_logits (B, T, N_ACTIONS)."""
+        action_out = self.backbone._encode(ram, self._action_in(action))
+        return self.action_head(action_out)
 
     def loss(
         self,
-        dpad_logits: torch.Tensor,    # (B, T, N_DPAD)
-        button_logits: torch.Tensor,  # (B, T, N_BUTTONS)
-        dpad_labels: torch.Tensor,    # (B, T)
-        button_labels: torch.Tensor,  # (B, T)
-        valid_mask: torch.Tensor,     # (B, T) bool -- False for padding steps
+        action_logits: torch.Tensor,  # (B, T, N_ACTIONS)
+        action_labels: torch.Tensor,  # (B, T)
+        valid_mask: torch.Tensor,     # (B, T) bool
     ) -> torch.Tensor:
         mask = valid_mask.flatten()
-        dpad_ce   = F.cross_entropy(dpad_logits.flatten(0, 1),   dpad_labels.flatten(),   reduction="none")[mask].mean()
-        button_ce = F.cross_entropy(button_logits.flatten(0, 1), button_labels.flatten(), reduction="none")[mask].mean()
-        return dpad_ce / math.log(N_DPAD) + button_ce / math.log(N_BUTTONS)
+        ce = F.cross_entropy(
+            action_logits.flatten(0, 1), action_labels.flatten(), reduction="none"
+        )[mask].mean()
+        return ce / math.log(N_ACTIONS)

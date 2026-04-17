@@ -29,6 +29,7 @@ BUTTON_ENCODING = {
 
 N_DPAD    = len(DPAD_ENCODING)   # 9
 N_BUTTONS = len(BUTTON_ENCODING) # 4
+N_ACTIONS = N_DPAD * N_BUTTONS   # 36
 
 DPAD_KEYS   = frozenset({'w', 'a', 's', 'd'})
 BUTTON_KEYS = frozenset({'j', 'f'})
@@ -39,3 +40,11 @@ def encode(keys: List[str]) -> Tuple[int, int]:
     dpad   = DPAD_ENCODING.get(pressed & DPAD_KEYS,   0)
     button = BUTTON_ENCODING.get(pressed & BUTTON_KEYS, 0)
     return dpad, button
+
+
+def encode_combined(dpad: int, button: int) -> int:
+    return dpad * N_BUTTONS + button
+
+
+def decode_combined(action: int) -> Tuple[int, int]:
+    return action // N_BUTTONS, action % N_BUTTONS

@@ -23,7 +23,6 @@ import torch.nn as nn
 from torch.nn.attention import flex_attention as fa
 
 from pixel2play.model.attention import Transformer
-from pixel2play.model.decoder import ActionDecoder
 from pixel2play.model.tokenizer import RAMTokenizer
 
 
@@ -41,7 +40,7 @@ class BackboneConfig:
     # Sequence
     n_steps: int = 200
     n_thinking_tokens: int = 1
-    n_action_tokens: int = 2        # NES: dpad + buttons
+    n_action_tokens: int = 1        # NES: single combined action
     # RAM
     ram_size: int = 2048
     # Flex-attention block size
@@ -50,9 +49,6 @@ class BackboneConfig:
     attention_history_len: List[int] = None
     # Dropout
     dropout: float = 0.1
-    # Action decoder
-    dec_n_layers: int = 3
-    dec_n_heads: int = 8
 
     def __post_init__(self):
         if self.attention_history_len is None:
@@ -137,15 +133,6 @@ class PolicyCausalTransformer(nn.Module):
             n_kv_heads=cfg.n_kv_heads,
             max_seq_len=self.max_seq_len,
             dropout=cfg.dropout,
-        )
-
-        # Action decoder (small causal transformer)
-        self.action_decoder = ActionDecoder(
-            backbone_dim=D,
-            dim=D,
-            n_action_tokens=cfg.n_action_tokens + 1,   # +1 for the start token
-            n_layers=cfg.dec_n_layers,
-            n_heads=cfg.dec_n_heads,
         )
 
         # Learned positional tokens (added to each token type)
@@ -234,8 +221,7 @@ class PolicyCausalTransformer(nn.Module):
     def forward(
         self,
         ram: torch.Tensor,                   # (B, T, 2048)
-        action_embeddings_in: torch.Tensor,  # (B, T, N, D)
+        action_embeddings_in: torch.Tensor,  # (B, T, 1, D)
     ) -> torch.Tensor:
-        """Returns action_out: (B, T, N, D)."""
-        action_out_tokens = self._encode(ram, action_embeddings_in)
-        return self.action_decoder(action_out_tokens, action_embeddings_in)
+        """Returns action_out_tokens: (B, T, D)."""
+        return self._encode(ram, action_embeddings_in)

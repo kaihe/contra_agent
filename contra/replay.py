@@ -83,7 +83,6 @@ def save_video(frames: np.ndarray, path: str) -> None:
 
 def replay_actions(source, *,
                    initial_state: bytes = None,
-                   level:         str   = "Level1",
                    want_video:    bool  = False,
                    verbose:       bool  = True) -> dict:
     """Replay a Contra action sequence.
@@ -94,8 +93,6 @@ def replay_actions(source, *,
         Path to a .npz file, or an (N, 9) action array.
     initial_state : bytes
         Required when source is an array. Emulator save-state to rewind to.
-    level : str
-        Level name (e.g. "Level1"). Used when source is an array.
     want_video : bool
         If True, collect frames and return as "video" (N+1, H, W, 3) uint8.
     """
@@ -103,7 +100,6 @@ def replay_actions(source, *,
         ckpt = np.load(source, allow_pickle=True)
         actions = ckpt["actions"]
         initial_emu_state = bytes(ckpt["initial_state"])
-        level_str = str(ckpt["level"]) if "level" in ckpt else level
         if verbose:
             print(f"  Load from {source} (replaying {len(actions)} actions)")
     else:
@@ -111,7 +107,6 @@ def replay_actions(source, *,
         if initial_state is None:
             raise ValueError("initial_state is required when source is an array")
         initial_emu_state = bytes(initial_state)
-        level_str = level
         if verbose:
             print(f"  Replaying {len(actions)} actions from array")
 

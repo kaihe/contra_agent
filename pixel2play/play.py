@@ -30,6 +30,7 @@ import torch
 from contra.events import EV_PLAYER_DIE, ADDR_XSCROLL, EV_ENEMY_HIT, EV_LEVELUP
 from contra.inputs import DPAD_TABLE, BUTTON_TABLE
 from pixel2play.model.backbone import BackboneConfig
+from pixel2play.model.nes_actions import decode_combined
 from pixel2play.model.nes_policy import NESPolicyModel
 from pixel2play.train import NESLightningModule
 
@@ -65,7 +66,7 @@ def _infer_backbone_cfg(state_dict: dict) -> BackboneConfig:
     """Infer BackboneConfig from checkpoint state dict keys/shapes."""
     import re as _re
 
-    dim = state_dict["model.dpad_embed.weight"].shape[1]
+    dim = state_dict["model.action_embed.weight"].shape[1]
 
     layer_re = _re.compile(r"model\.backbone\.transformer\.layers\.(\d+)\.")
     n_layers = max(
@@ -73,32 +74,27 @@ def _infer_backbone_cfg(state_dict: dict) -> BackboneConfig:
         default=9,
     ) + 1
 
-    dec_re = _re.compile(r"model\.backbone\.action_decoder\.transformer\.layers\.(\d+)\.")
-    dec_n_layers = max(
-        (int(m.group(1)) for k in state_dict for m in [dec_re.match(k)] if m),
-        default=2,
-    ) + 1
-
     return BackboneConfig(
         dim=dim,
         n_layers=n_layers,
-        dec_n_layers=dec_n_layers,
         n_steps=200,
         dropout=0.0,
     )
 
 
 def load_model(checkpoint_path: str, device: torch.device, config_path: Optional[str] = None) -> NESPolicyModel:
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state_dict = ckpt["state_dict"]
+    # torch.compile() adds '_orig_mod.' to keys — strip it if present
+    state_dict = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
+
     if config_path is not None:
-        import yaml
         from pixel2play.train import _load_config
         raw_cfg = _load_config(config_path)
         shared  = raw_cfg["shared"]
         pm      = raw_cfg.get("policy_model", {})
-        dec     = pm.get("action_decoder", {})
         backbone_cfg = BackboneConfig(
             n_steps=shared["n_seq_timesteps"],
-            n_text_tokens=shared.get("text_tokenizer_config", {}).get("text_embedding_shape", [1, 768])[0],
             dim=pm.get("transformer_dim", 1024),
             n_layers=pm.get("n_transformer_layers", 10),
             n_q_heads=pm.get("n_q_head", 16),
@@ -107,19 +103,11 @@ def load_model(checkpoint_path: str, device: torch.device, config_path: Optional
             mask_block_size=pm.get("mask_block_size", 128),
             attention_history_len=pm.get("attention_history_len", None),
             dropout=0.0,
-            dec_n_layers=dec.get("n_layers", 3),
-            dec_n_heads=dec.get("n_heads", 8),
         )
-        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        state_dict = ckpt["state_dict"]
     else:
-        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        state_dict = ckpt["state_dict"]
-        # torch.compile() adds '_orig_mod.' to keys — strip it if present
-        state_dict = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
         backbone_cfg = _infer_backbone_cfg(state_dict)
         print(f"  Inferred config: dim={backbone_cfg.dim}  n_layers={backbone_cfg.n_layers}"
-              f"  dec_n_layers={backbone_cfg.dec_n_layers}  n_action_tokens={backbone_cfg.n_action_tokens}")
+              f"  n_action_tokens={backbone_cfg.n_action_tokens}")
 
     module = NESLightningModule(backbone_cfg, lr=1e-4)
 
@@ -201,8 +189,7 @@ def run_episode(
     env, _, initial_state = make_env(level)
 
     ram_buf    = torch.zeros(ctx_len, RAM_SIZE, dtype=torch.uint8)
-    dpad_buf   = torch.zeros(ctx_len, dtype=torch.long)
-    button_buf = torch.zeros(ctx_len, dtype=torch.long)
+    action_buf = torch.zeros(ctx_len, dtype=torch.long)
     buf_len    = 0
 
     recorded_actions: list[np.ndarray] = []
@@ -219,43 +206,21 @@ def run_episode(
             buf_len += 1
         else:
             ram_buf    = torch.roll(ram_buf,    -1, dims=0)
-            dpad_buf   = torch.roll(dpad_buf,   -1, dims=0)
-            button_buf = torch.roll(button_buf, -1, dims=0)
+            action_buf = torch.roll(action_buf, -1, dims=0)
             ram_buf[-1]    = ram
-            dpad_buf[-1]   = 0
-            button_buf[-1] = 0
+            action_buf[-1] = 0
             pos = ctx_len - 1
 
-        ram_d = ram_buf.unsqueeze(0).to(device)                  # (1, ctx_len, 2048)
-
-        # Backbone: one pass
         with torch.no_grad():
-            action_out_tokens = model.encode(
-                ram_d,
-                dpad_buf.unsqueeze(0).to(device),
-                button_buf.unsqueeze(0).to(device),
-            )
+            action_logits = model(
+                ram_buf.unsqueeze(0).to(device),
+                action_buf.unsqueeze(0).to(device),
+            )                                                     # (1, ctx_len, N_ACTIONS)
 
-        # ActionDecoder pass 1: dpad
-        with torch.no_grad():
-            dpad_logits, _ = model.decode(
-                action_out_tokens,
-                dpad_buf.unsqueeze(0).to(device),
-                button_buf.unsqueeze(0).to(device),
-            )
-        pred_dpad = _sample(dpad_logits[0, pos], temperature)
+        pred_action = _sample(action_logits[0, pos], temperature)
+        action_buf[pos] = pred_action
 
-        # ActionDecoder pass 2: button conditioned on pred_dpad
-        dpad_buf[pos] = pred_dpad
-        with torch.no_grad():
-            _, button_logits = model.decode(
-                action_out_tokens,
-                dpad_buf.unsqueeze(0).to(device),
-                button_buf.unsqueeze(0).to(device),
-            )
-        pred_button = _sample(button_logits[0, pos], temperature)
-        button_buf[pos] = pred_button
-
+        pred_dpad, pred_button = decode_combined(pred_action)
         action = _decode_action(pred_dpad, pred_button)
         recorded_actions.append(action)
 

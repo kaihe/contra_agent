@@ -20,8 +20,6 @@ policy_model:
   n_kv_sink_tokens: 0
   model_type: "dense"
   dropout: 0.0        # no dropout — we want to overfit
-  action_decoder:
-    embed_dim: *transformer_dim
 
 stage3_finetune:
   optim:

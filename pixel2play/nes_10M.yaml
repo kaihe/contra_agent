@@ -9,7 +9,7 @@ shared:
       num_tokens: 1
 
 # Policy Model Configuration
-# dim=288  layers=7  heads=8  dec_layers=2  => 9.87M parameters
+# dim=288  layers=7  heads=8  => ~9M parameters
 policy_model:
   n_transformer_layers: 7
   n_q_head: 8
@@ -21,10 +21,6 @@ policy_model:
   n_kv_sink_tokens: 0
   model_type: "dense"
   dropout: 0.15
-  action_decoder:
-    embed_dim: *transformer_dim
-    n_layers: 2
-    n_heads: 4
 
 
 stage3_finetune:
@@ -41,7 +37,7 @@ stage3_finetune:
   training_dataset:
     batch_size: &stage3_batch_size 32
     local_prefix: dataset
-    data_folder: annotate/bc_data/level_all_ram
+    data_folder: annotate/bc_data/level_all_ram_
     always_labelled: true
     warn_on_starvation: false
     rand_augmentation:

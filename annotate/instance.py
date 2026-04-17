@@ -48,10 +48,6 @@ import numpy as np
 from contra.replay import replay_actions
 from pixel2play.model.nes_actions import encode
 
-_NOOP = np.zeros(9, dtype=np.uint8)
-
-_NOOP = np.zeros(9, dtype=np.uint8)
-
 # NES MultiBinary(9): [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 _NES_KEY_MAP = [(0, "f"), (4, "w"), (5, "s"), (6, "a"), (7, "d"), (8, "j")]
 
@@ -95,7 +91,7 @@ class BCDataSample:
         Raises AssertionError if the trace ends in 'lose'.
         """
         import stable_retro as retro
-        from contra.replay import rewind_state, step_env, GAME, SKIP
+        from contra.replay import rewind_state, GAME, SKIP
         from contra.events import EV_LEVELUP, EV_GAME_CLEAR
 
         npz_data    = np.load(npz_path, allow_pickle=True)
@@ -122,24 +118,13 @@ class BCDataSample:
         game_cleared = False
 
         for i, act in enumerate(raw_actions):
-            act_arr   = np.asarray(act, dtype=np.uint8)
-            pre_ram   = env.unwrapped.get_ram().copy()
-            cur_state = env.em.get_state()
+            act_arr = np.asarray(act, dtype=np.uint8)
+            pre_ram = env.unwrapped.get_ram().copy()
 
             for _ in range(SKIP):
                 env.step(act_arr.copy())
-            ram_orig  = env.unwrapped.get_ram().copy()
-            next_orig = env.em.get_state()
 
-            rewind_state(env, cur_state)
-            step_env(env, _NOOP)
-            ram_noop = env.unwrapped.get_ram().copy()
-
-            if np.array_equal(ram_orig, ram_noop):
-                dpad[i], button[i] = encode(_nes_keys(_NOOP))
-            else:
-                dpad[i], button[i] = encode(_nes_keys(act_arr))
-                rewind_state(env, next_orig)
+            dpad[i], button[i] = encode(_nes_keys(act_arr))
 
             curr_ram = env.unwrapped.get_ram().copy()
             ram_buf.append(curr_ram)                               # ram[i+1]: after action i
