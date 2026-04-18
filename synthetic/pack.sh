@@ -31,9 +31,11 @@ case "$MODE" in
         ARCHIVE="$2"
         [[ ! -f "$ARCHIVE" ]] && { echo "Error: file not found: $ARCHIVE"; exit 1; }
         mkdir -p "$TRACE_DIR"
+        BEFORE=$(find "$TRACE_DIR" -name '*.npz' | wc -l)
         echo "Unpacking $ARCHIVE -> $TRACE_DIR"
         tar -xzf "$ARCHIVE" -C "$SCRIPT_DIR"
-        echo "Done. Files in $TRACE_DIR: $(find "$TRACE_DIR" -name '*.npz' | wc -l) npz files"
+        AFTER=$(find "$TRACE_DIR" -name '*.npz' | wc -l)
+        echo "Done. Files in $TRACE_DIR: $AFTER npz files (+$((AFTER - BEFORE)) added)"
         ;;
     *)
         echo "Unknown mode: $MODE"

@@ -19,9 +19,7 @@ Usage
 """
 
 import argparse
-import os
 import warnings
-from collections import Counter
 
 import numpy as np
 import stable_retro as retro
@@ -52,40 +50,45 @@ def _ram_eq(a, b):
 
 # ── Action decoder ─────────────────────────────────────────────────────────────
 
-def _action_str(act):
-    """Decode a 9-element action array into a 'DPAD+BUTTON' label."""
+def _dpad_name(act):
+    """Return the d-pad label for an action (e.g. 'R', 'UL', or '_')."""
     a = [int(v) for v in act]
-
-    dpad_name = "_"
     for i, row in enumerate(DPAD_TABLE):
         if a[4] == row[4] and a[5] == row[5] and a[6] == row[6] and a[7] == row[7]:
-            dpad_name = DPAD_NAMES[i]
-            break
-
-    button_name = "_"
-    for i, row in enumerate(BUTTON_TABLE):
-        if a[0] == row[0] and a[8] == row[8]:
-            button_name = BUTTON_NAMES[i]
-            break
-
-    parts = [p for p in (dpad_name, button_name) if p != "_"]
-    return "+".join(parts) if parts else "NOOP"
+            return DPAD_NAMES[i]
+    return "_"
 
 
 # ── Pruning ────────────────────────────────────────────────────────────────────
 
-def prune_actions(actions, initial_emu_state, verbose=True):
-    """
-    Prune ineffective fire/jump bits from each action using RAM comparison.
+# The 6 independently-testable input bits and their human-readable names.
+# NES layout: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
+_CRITICAL_BITS = [
+    (0, "fire"),
+    (8, "jump"),
+    (4, "up"),
+    (5, "down"),
+    (6, "left"),
+    (7, "right"),
+]
 
-    For each action that has fire (bit 0) or jump (bit 8) set, test removing
-    each independently: if the RAM outcome is unchanged, that bit is pruned.
-    D-pad bits are never touched.
+def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool = True) -> np.ndarray:
+    """Zero out each of the 6 critical input bits when they leave RAM unchanged.
+
+    Each bit (fire, jump, up, down, left, right) is tested independently
+    against the original action's RAM result.  Controller-mirror bytes are
+    excluded from the comparison so input-register noise never blocks pruning.
+
+    To avoid creating fake 'Just Pressed' events (0->1 transitions) that diverge
+    the PRNG and game state later, we process the sequence backwards and only
+    allow pruning a bit if the NEXT frame also has that bit as 0.
 
     Returns
     -------
-    pruned : np.ndarray (N, 9) uint8  — actions with ineffective fire/jump bits cleared
+    pruned : np.ndarray (N, 9) uint8
     """
+    import stable_retro as retro
+
     n = len(actions)
     pruned = np.array(actions, dtype=np.uint8).copy()
 
@@ -100,95 +103,83 @@ def prune_actions(actions, initial_emu_state, verbose=True):
     env.reset()
     rewind_state(env, initial_emu_state)
 
-    pruned_fire = 0
-    pruned_jump = 0
-
+    # 1. Forward pass to save all true states and true RAMs
+    true_states = []
+    true_rams = []
     for i in range(n):
-        act_arr   = np.asarray(actions[i], dtype=np.uint8)
-        has_fire  = bool(act_arr[0])
-        has_jump  = bool(act_arr[8])
+        true_states.append(env.em.get_state())
+        step_env(env, actions[i])
+        true_rams.append(env.unwrapped.get_ram().copy())
 
-        if not has_fire and not has_jump:
-            step_env(env, act_arr)
+    # 2. Backward pass to prune safely
+    arrays_pruned = 0
+
+    for i in range(n - 1, -1, -1):
+        act_orig = actions[i]
+        
+        # Only consider bits that are 1 and where the NEXT frame (if any) is 0
+        active_bits = []
+        for idx, name in _CRITICAL_BITS:
+            if act_orig[idx] == 1:
+                # Safe to prune if it's the last frame OR the next frame also has this bit as 0
+                if i == n - 1 or pruned[i+1][idx] == 0:
+                    active_bits.append((idx, name))
+
+        if not active_bits:
             continue
 
-        cur_state = env.em.get_state()
-
-        # Apply original action → reference RAM
-        step_env(env, act_arr)
-        ram_orig  = env.unwrapped.get_ram().copy()
-        next_orig = env.em.get_state()
-
-        candidate = act_arr.copy()
-
-        # Try removing fire
-        if has_fire:
-            no_fire = act_arr.copy()
-            no_fire[0] = 0
+        candidate = act_orig.copy()
+        cur_state = true_states[i]
+        true_ram = true_rams[i]
+        
+        for idx, name in active_bits:
+            probe = candidate.copy()
+            probe[idx] = 0
             rewind_state(env, cur_state)
-            step_env(env, no_fire)
-            if _ram_eq(ram_orig, env.unwrapped.get_ram()):
-                candidate[0] = 0
-                pruned_fire += 1
-
-        # Try removing jump
-        if has_jump:
-            no_jump = act_arr.copy()
-            no_jump[8] = 0
-            rewind_state(env, cur_state)
-            step_env(env, no_jump)
-            if _ram_eq(ram_orig, env.unwrapped.get_ram()):
-                candidate[8] = 0
-                pruned_jump += 1
-
+            step_env(env, probe)
+            if _ram_eq(true_ram, env.unwrapped.get_ram()):
+                candidate = probe
+            
         pruned[i] = candidate
-        rewind_state(env, next_orig)
+        if not np.array_equal(candidate, act_orig):
+            arrays_pruned += 1
 
     env.close()
 
     if verbose:
-        fire_total = sum(1 for a in actions if a[0])
-        jump_total = sum(1 for a in actions if a[8])
-        print(f"  Total steps       : {n}")
-        print(f"  Steps with fire   : {fire_total}  →  pruned {pruned_fire}")
-        print(f"  Steps with jump   : {jump_total}  →  pruned {pruned_jump}")
+        print(f"    prune: {arrays_pruned}/{n} action arrays modified")
 
     return pruned
 
 
-# ── Histogram ──────────────────────────────────────────────────────────────────
+# ── Summary table ──────────────────────────────────────────────────────────────
 
 def show_action_histogram(actions, pruned, verbose=True):
-    """Print and save a bar chart of which action labels had fire/jump pruned."""
-    import matplotlib.pyplot as plt
+    """Print a before/after table covering fire, jump, and all d-pad directions."""
+    dpad_labels = [name for name in DPAD_NAMES if name != "_"]
 
-    counts = Counter(
-        _action_str(actions[i])
-        for i in range(len(actions))
-        if not np.array_equal(pruned[i], actions[i])
-    )
-    if not counts:
-        print("  No actions pruned.")
-        return
+    before = {"fire": 0, "jump": 0, **{d: 0 for d in dpad_labels}}
+    after  = {"fire": 0, "jump": 0, **{d: 0 for d in dpad_labels}}
 
-    labels, values = zip(*sorted(counts.items(), key=lambda x: -x[1]))
+    for orig, prun in zip(actions, pruned):
+        if orig[0]: before["fire"] += 1
+        if orig[8]: before["jump"] += 1
+        d = _dpad_name(orig)
+        if d != "_":
+            before[d] += 1
 
-    if verbose:
-        print("\n  Pruned action breakdown:")
-        for label, cnt in zip(labels, values):
-            print(f"    {label:<12}  {cnt}")
+        if prun[0]: after["fire"] += 1
+        if prun[8]: after["jump"] += 1
+        d_after = _dpad_name(prun)
+        if d_after != "_":
+            after[d_after] += 1
 
-    fig, ax = plt.subplots(figsize=(max(6, len(labels)), 4))
-    ax.bar(labels, values)
-    ax.set_xlabel("Action")
-    ax.set_ylabel("Count pruned")
-    ax.set_title("Pruned actions histogram")
-    plt.tight_layout()
-    os.makedirs("tmp", exist_ok=True)
-    out = "tmp/pruned_histogram.png"
-    plt.savefig(out, dpi=150)
-    plt.close(fig)
-    print(f"  Histogram saved → {out}")
+    labels = ["fire", "jump"] + [d for d in dpad_labels if before[d] > 0]
+
+    print(f"\n  {'input':<6}  {'before':>7}  {'after':>7}  {'pruned':>7}")
+    print(f"  {'-'*6}  {'-'*7}  {'-'*7}  {'-'*7}")
+    for label in labels:
+        print(f"  {label:<6}  {before[label]:>7}  {after[label]:>7}  {before[label] - after[label]:>7}")
 
 
 # ── Verification ───────────────────────────────────────────────────────────────
@@ -217,7 +208,10 @@ def main():
     parser.add_argument("--output", default=None, help="Output NPZ path")
     args = parser.parse_args()
 
-    file_path = 'synthetic/mc_trace/win_level8_202604171330.npz'
+    # file_path = 'synthetic/mc_trace/win_level1_202604091009.npz'
+    # file_path = 'synthetic/mc_trace/win_level8_202604171419.npz'
+    # file_path = 'synthetic/mc_trace/win_level1_202603301145.npz'
+    file_path = 'synthetic/mc_trace/win_level1_202604101354.npz'
     ckpt = np.load(file_path, allow_pickle=True)
     actions = ckpt["actions"]
     initial_emu_state = bytes(ckpt["initial_state"])
@@ -227,9 +221,9 @@ def main():
     pruned = prune_actions(actions, initial_emu_state, verbose=True)
     show_action_histogram(actions, pruned, verbose=True)
 
-    print("\nVerifying pruned sequence…")
-    verify_level_up(pruned, initial_emu_state, label="pruned")
+    verify_level_up(pruned, initial_emu_state, label="pruned", verbose=True)
 
+    
 
 
 

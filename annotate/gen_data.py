@@ -13,8 +13,9 @@ def _worker(npz_path: str) -> tuple:
     try:
         ram, dpad, button = BCDataSample(npz_path).replay_arrays(npz_path)
         return npz_path, ram, dpad, button, None
-    except AssertionError as e:
-        return npz_path, None, None, None, str(e)
+    except Exception as e:
+        import traceback
+        return npz_path, None, None, None, traceback.format_exc()
 
 
 def _collect_npz(sources: list[str]) -> list[str]:
@@ -86,9 +87,11 @@ def main():
 
     def _handle(npz_path, ram, dpad, button, err):
         if err:
-            tqdm.write(f"  Deleting bad trace: {os.path.basename(npz_path)} ({err})")
-            os.remove(npz_path)
-            return
+            err_msg = f"Data shard creation stopped due to failure in trace: {npz_path!r} - Error: {err}"
+            tqdm.write(err_msg)
+            if args.workers > 1 and 'pool' in locals():
+                pool.terminate()
+            sys.exit(err_msg)
         rams.append(ram)
         dpads.append(dpad)
         buttons.append(button)
