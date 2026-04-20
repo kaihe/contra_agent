@@ -17,6 +17,7 @@
 # Logs
 logs/
 *.tfevents.*
+*.out
 
 # Python
 __pycache__/

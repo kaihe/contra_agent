@@ -1,6 +1,7 @@
 import argparse
 import glob
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -85,13 +86,14 @@ def main():
         shard_idx += 1
         rams, dpads, buttons, names = [], [], [], []
 
+    bad_prune_dir = "synthetic/mc_trace_bad_prune"
+
     def _handle(npz_path, ram, dpad, button, err):
         if err:
-            err_msg = f"Data shard creation stopped due to failure in trace: {npz_path!r} - Error: {err}"
-            tqdm.write(err_msg)
-            if args.workers > 1 and 'pool' in locals():
-                pool.terminate()
-            sys.exit(err_msg)
+            tqdm.write(f"[skip] {os.path.basename(npz_path)}: {err.splitlines()[-1]}")
+            os.makedirs(bad_prune_dir, exist_ok=True)
+            shutil.move(npz_path, os.path.join(bad_prune_dir, os.path.basename(npz_path)))
+            return
         rams.append(ram)
         dpads.append(dpad)
         buttons.append(button)

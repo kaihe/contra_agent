@@ -210,8 +210,8 @@ def main():
 
     # file_path = 'synthetic/mc_trace/win_level1_202604091009.npz'
     # file_path = 'synthetic/mc_trace/win_level8_202604171419.npz'
-    # file_path = 'synthetic/mc_trace/win_level1_202603301145.npz'
-    file_path = 'synthetic/mc_trace/win_level1_202604101354.npz'
+    file_path = 'synthetic/mc_trace/win_level1_202603301145.npz'
+    # file_path = 'synthetic/mc_trace/win_level1_202604101354.npz'
     ckpt = np.load(file_path, allow_pickle=True)
     actions = ckpt["actions"]
     initial_emu_state = bytes(ckpt["initial_state"])
