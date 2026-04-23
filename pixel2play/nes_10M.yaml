@@ -30,14 +30,14 @@ stage3_finetune:
     beta_1: 0.9
     beta_2: 0.999
 
-  n_epochs: 30
+  n_epochs: 15
   n_val_recordings: 50
   accumulate_grad_batches: 16
 
   training_dataset:
     batch_size: &stage3_batch_size 32
     local_prefix: dataset
-    data_folder: annotate/bc_data/level_all_ram_
+    data_folder: annotate/bc_data/level_all_ram_prune
     always_labelled: true
     warn_on_starvation: false
     rand_augmentation:

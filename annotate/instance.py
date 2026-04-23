@@ -42,11 +42,18 @@ Training chunk  (get_chunk(start, T=200)):
 """
 
 import os
+import random
+import warnings
 
 import numpy as np
+import stable_retro as retro
 
 from contra.replay import replay_actions, rewind_state, step_env, GAME, SKIP
-from pixel2play.model.nes_actions import encode
+from contra.events import EV_LEVELUP, EV_GAME_CLEAR, compute_reward
+from contra.inputs import DPAD_TABLE, BUTTON_TABLE
+from pixel2play.model.nes_actions import encode, encode_combined, N_DPAD, N_BUTTONS
+
+warnings.filterwarnings("ignore", message=".*Gym.*")
 
 # NES MultiBinary(9): [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 _NES_KEY_MAP = [(0, "f"), (4, "w"), (5, "s"), (6, "a"), (7, "d"), (8, "j")]
@@ -88,8 +95,6 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
     -------
     pruned : np.ndarray (N, 9) uint8
     """
-    import stable_retro as retro
-
     n = len(actions)
     pruned = np.array(actions, dtype=np.uint8).copy()
 
@@ -117,7 +122,7 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
 
     for i in range(n - 1, -1, -1):
         act_orig = actions[i]
-        
+
         # Only consider bits that are 1 and where the NEXT frame (if any) is 0
         active_bits = []
         for idx, name in _CRITICAL_BITS:
@@ -132,7 +137,7 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
         candidate = act_orig.copy()
         cur_state = true_states[i]
         true_ram = true_rams[i]
-        
+
         for idx, name in active_bits:
             probe = candidate.copy()
             probe[idx] = 0
@@ -140,7 +145,7 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
             step_env(env, probe)
             if _ram_eq(true_ram, env.unwrapped.get_ram()):
                 candidate = probe
-            
+
         pruned[i] = candidate
         if not np.array_equal(candidate, act_orig):
             arrays_pruned += 1
@@ -156,6 +161,54 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
 def _nes_keys(nes: np.ndarray) -> list[str]:
     return [key for idx, key in _NES_KEY_MAP if nes[idx]]
 
+
+# ── DPO pair generation ────────────────────────────────────────────────────────
+
+_DPO_CHUNK_LEN  = 128
+_DPO_N_PIVOTS   = 8
+_DPO_N_ROLLOUTS = 16
+
+# (N_DPAD * N_BUTTONS, 9) — maps combined action index to 9-bit NES action
+_DPO_ACTION_LOOKUP = np.array(
+    [np.bitwise_or(DPAD_TABLE[d], BUTTON_TABLE[b])
+     for d in range(N_DPAD) for b in range(N_BUTTONS)],
+    dtype=np.uint8,
+)
+
+
+def _run_rollout(env, pivot_state: bytes, rollout_len: int, rng) -> tuple:
+    """Run one rollout on an already-open env. Returns (ram_buf, actions_buf, cumulative_reward)."""
+    rewind_state(env, pivot_state)
+
+    ram_buf           = np.empty((rollout_len, 2048), dtype=np.uint8)
+    actions_buf       = np.empty(rollout_len, dtype=np.int16)
+    cumulative_reward = 0.0
+
+    for i in range(rollout_len):
+        pre_ram        = env.unwrapped.get_ram()
+        ram_buf[i]     = pre_ram
+        combined       = int(rng.integers(0, N_DPAD * N_BUTTONS))
+        for _ in range(SKIP):
+            env.step(_DPO_ACTION_LOOKUP[combined])
+        cumulative_reward += compute_reward(pre_ram, env.unwrapped.get_ram())
+        actions_buf[i] = combined
+
+    return ram_buf.copy(), actions_buf.copy(), cumulative_reward
+
+
+def collect_dpo_pairs(
+    npz_path: str,
+    n_pivots:   int = _DPO_N_PIVOTS,
+    n_rollouts: int = _DPO_N_ROLLOUTS,
+    seed:       int = 0,
+) -> "dict | None":
+    """Thin wrapper — see DPODataSample.collect_pairs for full documentation."""
+    return DPODataSample(npz_path).collect_pairs(
+        n_pivots=n_pivots, n_rollouts=n_rollouts, seed=seed,
+    )
+
+
+# ── BCDataSample ───────────────────────────────────────────────────────────────
 
 class BCDataSample:
     """Universal data holder for one recorded episode."""
@@ -186,14 +239,11 @@ class BCDataSample:
         np.savez(self.features_path, ram=ram, dpad=dpad, button=button)
         return self.features_path
 
-    def replay_arrays(self, npz_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def replay_game(self, npz_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Replay the emulator and return (ram, dpad, button) arrays without saving.
 
         Raises AssertionError if the trace ends in 'lose'.
         """
-        import stable_retro as retro
-        from contra.events import EV_LEVELUP, EV_GAME_CLEAR
-
         npz_data    = np.load(npz_path, allow_pickle=True)
         initial_state = bytes(npz_data["initial_state"])
         raw_actions = prune_actions(
@@ -219,10 +269,13 @@ class BCDataSample:
         ram_buf.append(env.unwrapped.get_ram().copy())             # ram[0]: initial state
         leveled_up   = False
         game_cleared = False
+        emu_states   = []
+        reward_list  = []
 
         for i, act in enumerate(raw_actions):
             act_arr = np.asarray(act, dtype=np.uint8)
             pre_ram = env.unwrapped.get_ram().copy()
+            emu_states.append(env.em.get_state())
 
             for _ in range(SKIP):
                 env.step(act_arr.copy())
@@ -231,6 +284,7 @@ class BCDataSample:
 
             curr_ram = env.unwrapped.get_ram().copy()
             ram_buf.append(curr_ram)                               # ram[i+1]: after action i
+            reward_list.append(compute_reward(pre_ram, curr_ram))
 
             if EV_LEVELUP.trigger(pre_ram, curr_ram):
                 leveled_up = True
@@ -238,6 +292,9 @@ class BCDataSample:
                 game_cleared = True
 
         env.close()
+
+        self.emu_states  = emu_states
+        self.reward_arr  = np.array(reward_list, dtype=np.float32)  # (N,)
 
         outcome = "game_clear" if game_cleared else "level_up" if leveled_up else "lose"
         assert outcome != "lose", \
@@ -251,7 +308,7 @@ class BCDataSample:
         if os.path.isfile(self.features_path):
             print(f"  {self.uuid}: already exists, skipping")
             return self.features_path
-        ram, dpad, button = self.replay_arrays(npz_path)
+        ram, dpad, button = self.replay_game(npz_path)
         return self.save_from_features(ram, dpad, button)
 
     @property
@@ -260,3 +317,117 @@ class BCDataSample:
 
     def __repr__(self) -> str:
         return f"BCDataSample(uuid={self.uuid!r})"
+
+
+# ── DPODataSample ──────────────────────────────────────────────────────────────
+
+class DPODataSample(BCDataSample):
+    """DPO pair generation from one winning mc_trace NPZ.
+
+    Extends BCDataSample so the mc_trace path is stored as features_path and
+    the uuid is derived from the filename — no separate constructor needed.
+    """
+
+    def collect_pairs(
+        self,
+        n_pivots:   int = _DPO_N_PIVOTS,
+        n_rollouts: int = _DPO_N_ROLLOUTS,
+        seed:       int = 0,
+    ) -> "dict | None":
+        """Generate DPO training pairs from the mc_trace at self.features_path.
+
+        Returns None if no valid pairs were found (trace too short, or all
+        random rollouts score >= original).
+
+        Returns a dict with keys:
+          chosen_ram       : (M, CHUNK_LEN, 2048) uint8
+          chosen_actions   : (M, CHUNK_LEN)       int16
+          rejected_ram     : (M, CHUNK_LEN, 2048) uint8
+          rejected_actions : (M, CHUNK_LEN)       int16
+          pivot            : (M,)                 int16  loss computed on [pivot:]
+        """
+        ram, dpad, button = self.replay_game(self.features_path)
+        N = len(ram)
+        ram_arr      = ram
+        combined_arr = np.array(
+            [encode_combined(int(dpad[i]), int(button[i])) for i in range(N)],
+            dtype=np.int16,
+        )
+        emu_states  = self.emu_states
+        reward_arr  = self.reward_arr
+
+        n_chunks = N // _DPO_CHUNK_LEN
+        if n_chunks == 0:
+            return None
+
+        rng = random.Random(seed)
+        chosen_rams, chosen_acts     = [], []
+        rejected_rams, rejected_acts = [], []
+        pivots = []
+
+        env = retro.make(
+            game=GAME, state=retro.State.NONE,
+            use_restricted_actions=retro.Actions.ALL,
+            obs_type=retro.Observations.RAM, render_mode=None,
+            inttype=retro.data.Integrations.CUSTOM_ONLY,
+        )
+        env.reset()
+
+        for ci in range(n_chunks):
+            cs          = ci * _DPO_CHUNK_LEN
+            orig_reward = float(reward_arr[cs : cs + _DPO_CHUNK_LEN].sum())
+            if orig_reward <= 0:
+                continue
+
+            pivot_indices = sorted(rng.sample(range(1, _DPO_CHUNK_LEN), n_pivots))
+
+            for p in pivot_indices:
+                rollout_len = _DPO_CHUNK_LEN - p
+                pivot_state = emu_states[cs + p]
+
+                best_ram     = None
+                best_actions = None
+                best_score   = -float("inf")
+
+                for k in range(n_rollouts):
+                    np_rng = np.random.default_rng(seed * 10_000_000 + ci * 10_000 + p * 100 + k)
+                    r_ram, r_acts, r_reward = _run_rollout(env, pivot_state, rollout_len, np_rng)
+                    if r_reward < orig_reward and r_reward > best_score:
+                        best_score   = r_reward
+                        best_ram     = r_ram
+                        best_actions = r_acts
+
+                if best_ram is None:
+                    continue
+
+                c_ram  = ram_arr[cs : cs + _DPO_CHUNK_LEN]
+                c_acts = combined_arr[cs : cs + _DPO_CHUNK_LEN]
+
+                r_ram_full  = np.empty((_DPO_CHUNK_LEN, 2048), dtype=np.uint8)
+                r_acts_full = np.empty(_DPO_CHUNK_LEN, dtype=np.int16)
+                r_ram_full[:p]  = c_ram[:p]
+                r_ram_full[p:]  = best_ram
+                r_acts_full[:p] = c_acts[:p]
+                r_acts_full[p:] = best_actions
+
+                chosen_rams.append(c_ram.copy())
+                chosen_acts.append(c_acts.copy())
+                rejected_rams.append(r_ram_full)
+                rejected_acts.append(r_acts_full)
+                pivots.append(p)
+
+        env.close()
+
+        if not chosen_rams:
+            return None
+
+        return dict(
+            chosen_ram       = np.stack(chosen_rams).astype(np.uint8),
+            chosen_actions   = np.stack(chosen_acts).astype(np.int16),
+            rejected_ram     = np.stack(rejected_rams).astype(np.uint8),
+            rejected_actions = np.stack(rejected_acts).astype(np.int16),
+            pivot            = np.array(pivots, dtype=np.int16),
+        )
+
+    def __repr__(self) -> str:
+        return f"DPODataSample(uuid={self.uuid!r})"

@@ -174,6 +174,7 @@ def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1)
         curr_ram = env.unwrapped.get_ram()
 
         if _death_ev.trigger(pre_ram, curr_ram):
+            seq.append(act)
             return seq, cumulative_reward, True
 
         cumulative_reward += compute_reward(pre_ram, curr_ram)
