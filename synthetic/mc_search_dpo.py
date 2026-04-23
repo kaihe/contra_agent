@@ -75,15 +75,54 @@ def _graph_actions(root: SearchNode) -> list[np.ndarray]:
     return actions
 
 
+def _flatten_graph(root: SearchNode) -> list[dict]:
+    """Iteratively flatten the tree into a list to prevent pickle RecursionError."""
+    node_list = []
+    id_to_idx = {id(root): 0}
+    queue = [root]
+    
+    head = 0
+    while head < len(queue):
+        curr = queue[head]
+        head += 1
+        
+        children = []
+        if curr.next: children.append(curr.next)
+        children.extend(curr.dead)
+        children.extend(curr.secondary)
+        
+        for child in children:
+            if id(child) not in id_to_idx:
+                id_to_idx[id(child)] = len(queue)
+                queue.append(child)
+                
+    for curr in queue:
+        node_list.append({
+            "action": curr.action,
+            "reward": curr.reward,
+            "next": id_to_idx[id(curr.next)] if curr.next else None,
+            "dead": [id_to_idx[id(n)] for n in curr.dead],
+            "secondary": [id_to_idx[id(n)] for n in curr.secondary],
+        })
+    return node_list
+
+
+def _unflatten_graph(flat_nodes: list[dict]) -> SearchNode:
+    """Iteratively reconstruct the tree from a flat list."""
+    nodes = [SearchNode(action=fn["action"], reward=fn["reward"]) for fn in flat_nodes]
+    for i, fn in enumerate(flat_nodes):
+        if fn["next"] is not None:
+            nodes[i].next = nodes[fn["next"]]
+        nodes[i].dead = [nodes[j] for j in fn.get("dead", [])]
+        nodes[i].secondary = [nodes[j] for j in fn.get("secondary", [])]
+    return nodes[0]
+
+
 def save_graph(root: SearchNode, path: str, init_emu: bytes) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    old_limit = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(old_limit, 50_000))
-    try:
-        with open(path, "wb") as f:
-            pickle.dump({"root": root, "init_emu": init_emu}, f)
-    finally:
-        sys.setrecursionlimit(old_limit)
+    flat_root = _flatten_graph(root)
+    with open(path, "wb") as f:
+        pickle.dump({"root": flat_root, "init_emu": init_emu}, f)
 
 
 class _SearchNodeUnpickler(pickle.Unpickler):
@@ -91,6 +130,7 @@ class _SearchNodeUnpickler(pickle.Unpickler):
         if module == "__main__" and name == "SearchNode":
             return SearchNode
         return super().find_class(module, name)
+
 
 def load_graph(path: str) -> tuple[SearchNode, bytes]:
     old_limit = sys.getrecursionlimit()
@@ -100,7 +140,14 @@ def load_graph(path: str) -> tuple[SearchNode, bytes]:
             d = _SearchNodeUnpickler(f).load()
     finally:
         sys.setrecursionlimit(old_limit)
-    return d["root"], d["init_emu"]
+        
+    root_data = d["root"]
+    if isinstance(root_data, list):
+        root = _unflatten_graph(root_data)
+    else:
+        root = root_data
+        
+    return root, d["init_emu"]
 
 
 def search_and_build_graph(
