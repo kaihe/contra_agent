@@ -73,46 +73,6 @@ def _all_paths(root: SearchNode) -> list[dict]:
     return paths
 
 
-def collect_dpo_pairs(root: SearchNode, init_emu: bytes, chunk_len: int = 128) -> list[dict]:
-    """Build (good_trace, bad_trace) action pairs from the search tree."""
-    good_nodes   = _good_trace(root)
-    good_actions = np.array(
-        [n.action for n in good_nodes[1:]], dtype=np.uint8
-    ) if len(good_nodes) > 1 else np.empty((0, 9), dtype=np.uint8)
-
-    def _pad(arr: np.ndarray) -> np.ndarray:
-        if len(arr) < chunk_len:
-            arr = np.concatenate([arr, np.zeros((chunk_len - len(arr), 9), dtype=arr.dtype)])
-        return arr
-
-    result = []
-    for diverge_idx, node in enumerate(good_nodes):
-        for kind, branches in (("dead", node.dead), ("secondary", node.secondary)):
-            for head in branches:
-                branch_acts = _branch_actions(head)
-                L           = min(len(branch_acts), chunk_len)
-                p           = min(chunk_len - L, diverge_idx)
-                chunk_start = diverge_idx - p
-
-                good_trace = good_actions[chunk_start : chunk_start + chunk_len].copy()
-                branch_L   = branch_acts[:L]
-                bad_trace  = (
-                    np.concatenate([good_actions[chunk_start:diverge_idx], branch_L])
-                    if p > 0 else branch_L
-                )
-
-                result.append({
-                    "start_emu"  : init_emu,
-                    "prefix_len" : chunk_start,
-                    "good_trace" : _pad(good_trace),
-                    "bad_trace"  : _pad(bad_trace),
-                    "branch_pos" : diverge_idx,
-                    "pivot"      : p,
-                    "kind"       : kind,
-                })
-    return result
-
-
 # ── emulator helpers ───────────────────────────────────────────────────────────
 
 def _make_env(level: int) -> retro.RetroEnv:
@@ -148,6 +108,71 @@ def _accumulate_reward(env, actions: list[np.ndarray]) -> float:
         total += compute_reward(pre_ram, curr_ram)
     return total
 
+
+def collect_dpo_pairs(root: SearchNode, init_emu: bytes, env: retro.RetroEnv = None, chunk_len: int = 128) -> list[dict]:
+    """Build (good_trace, bad_trace) action pairs from the search tree."""
+    good_nodes   = _good_trace(root)
+    good_actions = np.array(
+        [n.action for n in good_nodes[1:]], dtype=np.uint8
+    ) if len(good_nodes) > 1 else np.empty((0, 9), dtype=np.uint8)
+
+    emu_states = []
+    if env is not None:
+        rewind_state(env, init_emu)
+        emu_states.append(init_emu)
+        for act in good_actions:
+            step_env(env, act)
+            emu_states.append(env.em.get_state())
+
+    def _pad(arr: np.ndarray) -> np.ndarray:
+        if len(arr) < chunk_len:
+            arr = np.concatenate([arr, np.zeros((chunk_len - len(arr), 9), dtype=arr.dtype)])
+        return arr
+
+    result = []
+    for diverge_idx, node in enumerate(good_nodes):
+        for kind, branches in (("dead", node.dead), ("secondary", node.secondary)):
+            for head in branches:
+                branch_acts = _branch_actions(head)
+
+                good_reward = bad_reward = None
+                if env is not None:
+                    branch_emu = emu_states[diverge_idx]
+                    good_cont  = good_actions[diverge_idx : diverge_idx + len(branch_acts)]
+                    n_steps    = min(len(branch_acts), len(good_cont))
+
+                    rewind_state(env, branch_emu)
+                    bad_reward = _accumulate_reward(env, branch_acts[:n_steps])
+
+                    rewind_state(env, branch_emu)
+                    good_reward = _accumulate_reward(env, good_cont[:n_steps])
+
+                    if kind == "secondary" and bad_reward >= good_reward:
+                        continue
+
+                L           = min(len(branch_acts), chunk_len)
+                p           = min(chunk_len - L, diverge_idx)
+                chunk_start = diverge_idx - p
+
+                good_trace = good_actions[chunk_start : chunk_start + chunk_len].copy()
+                branch_L   = branch_acts[:L]
+                bad_trace  = (
+                    np.concatenate([good_actions[chunk_start:diverge_idx], branch_L])
+                    if p > 0 else branch_L
+                )
+
+                result.append({
+                    "start_emu"   : init_emu,
+                    "prefix_len"  : chunk_start,
+                    "good_trace"  : _pad(good_trace),
+                    "bad_trace"   : _pad(bad_trace),
+                    "branch_pos"  : diverge_idx,
+                    "pivot"       : p,
+                    "kind"        : kind,
+                    "good_reward" : good_reward,
+                    "bad_reward"  : bad_reward,
+                })
+    return result
 
 # ── validators ─────────────────────────────────────────────────────────────────
 
@@ -260,7 +285,7 @@ def _infer_level_goal(path: str) -> tuple[int, str]:
     return 1, "level_up"
 
 
-GRAPH_PATH = "synthetic/mc_graph/graph_level1_202604231343.pkl"
+GRAPH_PATH = "synthetic/mc_graph/graph_level6_202604231600.pkl"
 
 
 def main():
@@ -285,7 +310,9 @@ def main():
         print(f"  {k:4d}  {branch:>6}  {p['length']:7d}  {p['kind']}")
     print()
 
-    pairs = collect_dpo_pairs(root, init_emu)
+    env = _make_env(level)
+    pairs = collect_dpo_pairs(root, init_emu, env)
+    env.close()
     print(f"── DPO pairs ───────────────────────────────────")
     print(f"  total pairs : {len(pairs)}")
     if pairs:

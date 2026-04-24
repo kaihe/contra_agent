@@ -55,7 +55,10 @@ def _make_env(level: int) -> retro.RetroEnv:
     return env
 
 
-def _render_trace(env, init_emu: bytes, prefix: np.ndarray, actions: np.ndarray) -> list[np.ndarray]:
+TAIL_FRAMES = 10  # extra NES frames to render after dead trace ends (shows death animation)
+
+
+def _render_trace(env, init_emu: bytes, prefix: np.ndarray, actions: np.ndarray, tail: int = 0) -> list[np.ndarray]:
     """Rewind to init_emu, fast-forward through prefix, then capture one frame per action."""
     rewind_state(env, init_emu)
     for act in prefix:
@@ -69,14 +72,20 @@ def _render_trace(env, init_emu: bytes, prefix: np.ndarray, actions: np.ndarray)
             obs = result[0]
         if obs is not None:
             frames.append(obs.copy())
+    noop = np.zeros(9, dtype=np.uint8)
+    for _ in range(tail):
+        obs = env.step(noop)[0]
+        if obs is not None:
+            frames.append(obs.copy())
     return frames
 
 
 def _load_pair_frames(env, pair: dict, good_actions: np.ndarray) -> tuple[list[np.ndarray], list[np.ndarray]]:
     init_emu = pair["start_emu"]
     prefix   = good_actions[0 : pair["prefix_len"]]
-    good = _render_trace(env, init_emu, prefix, pair["good_trace"])
-    bad  = _render_trace(env, init_emu, prefix, pair["bad_trace"])
+    tail     = TAIL_FRAMES if pair.get("kind") == "dead" else 0
+    good = _render_trace(env, init_emu, prefix, pair["good_trace"], tail=0)
+    bad  = _render_trace(env, init_emu, prefix, pair["bad_trace"],  tail=tail)
     return good, bad
 
 
@@ -97,7 +106,8 @@ def main(graph_path: str) -> None:
         [n.action for n in good_nodes[1:]], dtype=np.uint8
     ) if len(good_nodes) > 1 else np.empty((0, 9), dtype=np.uint8)
     good_total = len(good_nodes) - 1  # exclude root
-    pairs      = collect_dpo_pairs(root, init_emu)
+    env        = _make_env(level)
+    pairs      = collect_dpo_pairs(root, init_emu, env)
 
     if not pairs:
         print("No DPO pairs found in graph.")
@@ -105,7 +115,6 @@ def main(graph_path: str) -> None:
 
     print(f"Loaded {len(pairs)} DPO pairs  (level={level}, goal={goal}, good_trace={good_total})")
 
-    env   = _make_env(level)
     cache: dict[int, tuple[list, list]] = {}
 
     # ── window setup (sized from first pair) ─────────────────────────────────
@@ -156,9 +165,8 @@ def main(graph_path: str) -> None:
         return max(len(good_frames), len(bad_frames), 1)
 
     def get_surf(frames: list, idx: int) -> pygame.Surface:
-        if not frames:
+        if not frames or idx >= len(frames):
             return black_surf
-        idx = min(idx, len(frames) - 1)
         return _to_surf(frames[idx], cell_w, cell_h)
 
     def switch_pair(new_idx: int) -> None:
@@ -221,6 +229,7 @@ def main(graph_path: str) -> None:
         screen.blit(lbl_g, (6, 4))
         screen.blit(lbl_b, (cell_w + 6, 4))
 
+
         # ── panel background ──────────────────────────────────────────────────
         pygame.draw.rect(screen, (20, 20, 20), pygame.Rect(0, cell_h, win_w, PANEL_HEIGHT))
 
@@ -228,11 +237,15 @@ def main(graph_path: str) -> None:
         bp = branch_markers[pair_idx][0]
         pivot = pairs[pair_idx].get("pivot", -1)
         nf  = n_frames()
+        gr  = pairs[pair_idx].get("good_reward")
+        br  = pairs[pair_idx].get("bad_reward")
+        good_score = f"({gr:+.0f})" if gr is not None else ""
+        bad_score  = f"({br:+.0f})" if br is not None else ""
         info = (
             f"pair {pair_idx + 1}/{len(pairs)}  "
             f"branch@{bp}/{good_total} (pivot={pivot})  "
             f"frame {frame_idx}/{nf - 1}  "
-            f"good={len(good_frames)}  bad={len(bad_frames)}  "
+            f"good={len(good_frames)}{good_score}  bad={len(bad_frames)}{bad_score}  "
             f"{'PAUSED' if paused else 'PLAYING'}"
         )
         screen.blit(font_info.render(info, True, (160, 160, 160)), (M, cell_h + 6))
