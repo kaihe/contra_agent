@@ -33,6 +33,7 @@ stage3_finetune:
   n_epochs: 15
   n_val_recordings: 50
   accumulate_grad_batches: 16
+  checkpoint_dir: tmp/checkpoints/nes_policy
 
   training_dataset:
     batch_size: &stage3_batch_size 32

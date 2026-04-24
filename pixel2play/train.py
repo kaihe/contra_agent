@@ -146,8 +146,6 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",         default=pre_args.config, help="Path to YAML config file")
-    parser.add_argument("--data_folder",    default=stage3["training_dataset"]["data_folder"])
-    parser.add_argument("--checkpoint_dir", default=CHECKPOINT_DIR)
     parser.add_argument("--exp_name",       default=None, help="Experiment name, used as checkpoint subdirectory")
     parser.add_argument("--fast_dev_run",            action="store_true")
     parser.add_argument("--no_compile",              action="store_true",
@@ -178,8 +176,11 @@ def main():
         dropout=pm.get("dropout", 0.0),
     )
 
+    data_folder = stage3["training_dataset"]["data_folder"]
+    checkpoint_dir = stage3.get("checkpoint_dir", CHECKPOINT_DIR)
+
     datamodule = NESDataModule(
-        data_root=args.data_folder,
+        data_root=data_folder,
         n_steps=n_steps,
         batch_size=batch_size,
         n_val_recordings=stage3.get("n_val_recordings", 50),
@@ -194,7 +195,7 @@ def main():
     from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, ThroughputMonitor
     from lightning.pytorch.loggers import TensorBoardLogger
 
-    ckpt_dir = os.path.join(args.checkpoint_dir, args.exp_name) if args.exp_name else args.checkpoint_dir
+    ckpt_dir = os.path.join(checkpoint_dir, args.exp_name) if args.exp_name else checkpoint_dir
     has_val = datamodule.n_val_recordings > 0
     checkpoint_cb = ModelCheckpoint(
         dirpath=ckpt_dir,

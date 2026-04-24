@@ -80,7 +80,7 @@ def _ram_eq(a: np.ndarray, b: np.ndarray) -> bool:
     return bool(np.all(np.isin(diff, _INPUT_RAM_INDICES)))
 
 
-def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool = True) -> np.ndarray:
+def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool = True, env=None) -> np.ndarray:
     """Zero out each of the 6 critical input bits when they leave RAM unchanged.
 
     Each bit (fire, jump, up, down, left, right) is tested independently
@@ -98,15 +98,17 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
     n = len(actions)
     pruned = np.array(actions, dtype=np.uint8).copy()
 
-    env = retro.make(
-        game=GAME,
-        state=retro.State.NONE,
-        use_restricted_actions=retro.Actions.ALL,
-        obs_type=retro.Observations.RAM,
-        render_mode=None,
-        inttype=retro.data.Integrations.CUSTOM_ONLY,
-    )
-    env.reset()
+    _own_env = env is None
+    if _own_env:
+        env = retro.make(
+            game=GAME,
+            state=retro.State.NONE,
+            use_restricted_actions=retro.Actions.ALL,
+            obs_type=retro.Observations.RAM,
+            render_mode=None,
+            inttype=retro.data.Integrations.CUSTOM_ONLY,
+        )
+        env.reset()
     rewind_state(env, initial_emu_state)
 
     # 1. Forward pass to save all true states and true RAMs
@@ -150,7 +152,8 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
         if not np.array_equal(candidate, act_orig):
             arrays_pruned += 1
 
-    env.close()
+    if _own_env:
+        env.close()
 
     if verbose:
         print(f"    prune: {arrays_pruned}/{n} action arrays modified")

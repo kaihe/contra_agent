@@ -41,9 +41,9 @@ def main():
     parser.add_argument("--level",          type=int, default=None, choices=list(range(1, 9)),
                         help="Fixed level to search (default: random each run)")
     parser.add_argument("--workers",        type=int, default=os.cpu_count())
-    parser.add_argument("--rollouts",       type=int, default=512)
-    parser.add_argument("--rollout-len",    type=int, default=36)
-    parser.add_argument("--max-rewind",     type=int, default=30)
+    parser.add_argument("--rollouts",       type=int, default=128)
+    parser.add_argument("--rollout-len",    type=int, default=48)
+    parser.add_argument("--max-rewind",     type=int, default=32)
     parser.add_argument("--max-time",       type=int, default=600)
     parser.add_argument("--max-actions",    type=int, default=4000)
     parser.add_argument("--secondary-prob", type=float, default=0.25)

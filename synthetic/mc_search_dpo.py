@@ -320,7 +320,7 @@ def search_and_build_graph(
 
         step_num      = len(chain)
         prev_step_num = step_num - commit_n
-        if verbose and ((step_num // 10) > (prev_step_num // 10) or done or pending_events):
+        if verbose and ((step_num // 100) > (prev_step_num // 100) or done or pending_events):
             ev_col = " ".join(pending_events) if pending_events else ""
             print(f"  {step_num:4d}  {current.reward:7.1f}  {death_rate:5.2f}  {elapsed:6.1f}s  {ev_col}")
             pending_events.clear()

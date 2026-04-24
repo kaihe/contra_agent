@@ -22,7 +22,7 @@ import numpy as np
 import pygame
 import stable_retro as retro
 
-from annotate.gen_dpo_data import collect_dpo_pairs, _infer_level_goal, _good_trace
+from annotate.instance_dpo import collect_dpo_pairs, _infer_level_goal, _good_trace
 from contra.replay import rewind_state
 from synthetic.mc_search import SKIP
 from synthetic.mc_search_dpo import load_graph

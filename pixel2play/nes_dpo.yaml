@@ -1,0 +1,31 @@
+shared:
+  n_seq_timesteps: 128
+
+policy_model:
+  n_transformer_layers: 7
+  n_q_head: 8
+  n_kv_head: 8
+  n_thinking_tokens: 1
+  transformer_dim: &transformer_dim 288
+  mask_block_size: 128
+  attention_history_len: [128, 128, 128, 128, 128, 128, 128]
+  n_kv_sink_tokens: 0
+  model_type: "dense"
+  dropout: 0.0
+
+dpo:
+  beta: 0.1
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  batch_size: 8
+  max_epochs: 5
+  val_fraction: 0.1
+  label_smoothing: 0.0
+  average_logprob: true
+  seed: 42
+  limit_train_batches: null
+  limit_val_batches: null
+  data_folder: annotate/bc_data/level_all_ram_dpo
+  kind_filter: 0  # 0=dead only, 1=secondary only, null=all
+  ref_checkpoint: tmp/checkpoints/nes_policy/10_prune/best.ckpt
+  checkpoint_dir: tmp/checkpoints/nes_policy_dpo
