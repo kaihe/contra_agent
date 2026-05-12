@@ -81,13 +81,15 @@ class ShardRecording:
     """
 
     def __init__(self, shard_ram: np.ndarray, shard_dpad: np.ndarray,
-                 shard_button: np.ndarray, start: int, length: int, name: str = ""):
-        self._ram    = shard_ram
-        self._dpad   = shard_dpad
-        self._button = shard_button
-        self._start  = start
-        self._n      = length
-        self.path    = name   # original filename — used for level detection in train.py
+                 shard_button: np.ndarray, start: int, length: int, name: str = "",
+                 shard_frames: np.ndarray | None = None):
+        self._ram     = shard_ram
+        self._frames  = shard_frames
+        self._dpad    = shard_dpad
+        self._button  = shard_button
+        self._start   = start
+        self._n       = length
+        self.path     = name   # original filename — used for level detection in train.py
 
     def __len__(self) -> int:
         return self._n
@@ -97,24 +99,34 @@ class ShardRecording:
         abs_start = self._start + start
         sl = slice(abs_start, abs_start + valid_len)
 
-        ram    = torch.from_numpy(self._ram[sl].astype(np.uint8))
+        if self._frames is not None:
+            # Vision mode: (valid_len, H, W) -> (valid_len, 1, H, W)
+            obs = torch.from_numpy(self._frames[sl].astype(np.uint8)).unsqueeze(1)
+        else:
+            obs = torch.from_numpy(self._ram[sl].astype(np.uint8))
+
         dpad   = torch.from_numpy(self._dpad[sl].astype(np.int64))
         button = torch.from_numpy(self._button[sl].astype(np.int64))
 
-        return _pad_chunk(ram, dpad, button, valid_len, length)
+        return _pad_chunk(obs, dpad, button, valid_len, length)
 
 
-def _pad_chunk(ram, dpad, button, valid_len, length):
+def _pad_chunk(obs, dpad, button, valid_len, length):
     valid_mask = torch.zeros(length, dtype=torch.bool)
     valid_mask[:valid_len] = True
 
     if valid_len < length:
         pad = length - valid_len
-        ram    = torch.cat([ram,    ram[-1:].expand(pad, -1)],           dim=0)
+        if obs.dim() == 2:
+            # RAM: (T, 2048)
+            obs = torch.cat([obs, obs[-1:].expand(pad, -1)], dim=0)
+        else:
+            # Frames: (T, 1, H, W)
+            obs = torch.cat([obs, obs[-1:].expand(pad, -1, -1, -1)], dim=0)
         dpad   = torch.cat([dpad,   torch.zeros(pad, dtype=dpad.dtype)], dim=0)
         button = torch.cat([button, torch.zeros(pad, dtype=button.dtype)], dim=0)
 
-    return ram, dpad, button, valid_mask
+    return obs, dpad, button, valid_mask
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +145,13 @@ def _load_recordings(data_root: str) -> List:
             ram    = np.load(os.path.join(shard_dir, "ram.npy"),    mmap_mode="r")
             dpad   = np.load(os.path.join(shard_dir, "dpad.npy"),   mmap_mode="r")
             button = np.load(os.path.join(shard_dir, "button.npy"), mmap_mode="r")
+            frames_path = os.path.join(shard_dir, "frames.npy")
+            frames = np.load(frames_path, mmap_mode="r") if os.path.exists(frames_path) else None
             index  = np.load(os.path.join(shard_dir, "index.npy"))
             names_path = os.path.join(shard_dir, "names.npy")
             names  = np.load(names_path, allow_pickle=True) if os.path.exists(names_path) else [""] * len(index)
             for (start, length), name in zip(index, names):
-                recordings.append(ShardRecording(ram, dpad, button, int(start), int(length), str(name)))
+                recordings.append(ShardRecording(ram, dpad, button, int(start), int(length), str(name), frames))
         return recordings
 
     npz_files = sorted(

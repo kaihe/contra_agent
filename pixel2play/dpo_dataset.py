@@ -72,11 +72,14 @@ def _convert_actions(actions_9bit: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 class DPODataset(Dataset):
-    def __init__(self, data_root: str, kind_filter: int | None = None):
+    def __init__(self, data_root: str, kind_filter: int | None = None,
+                 min_reward_margin: float | None = None):
         """Args:
             data_root: directory containing DPO .npz files.
             kind_filter: if 0, keep only dead branches; if 1, keep only secondary;
                          if None, keep all.
+            min_reward_margin: if set, skip pairs where (good_reward - bad_reward)
+                               is less than this value.
         """
         self.samples = []  # list of (npz_path, index_within_file)
         npz_paths = sorted(glob.glob(os.path.join(data_root, "*.npz")))
@@ -90,14 +93,21 @@ class DPODataset(Dataset):
                 data.close()
                 continue
             kinds = data["kind"]
+            good_rewards = data["good_reward"]
+            bad_rewards = data["bad_reward"]
             for i in range(n):
                 if kind_filter is not None and int(kinds[i]) != kind_filter:
                     continue
+                if min_reward_margin is not None:
+                    margin = float(good_rewards[i]) - float(bad_rewards[i])
+                    if margin < min_reward_margin:
+                        continue
                 self.samples.append((path, i))
             data.close()
 
         logging.info(f"DPODataset: {len(self.samples)} pairs from {len(npz_paths)} files"
-                     f"{' (kind=' + str(kind_filter) + ' only)' if kind_filter is not None else ''}")
+                     f"{' (kind=' + str(kind_filter) + ' only)' if kind_filter is not None else ''}"
+                     f"{' (margin>=' + str(min_reward_margin) + ')' if min_reward_margin is not None else ''}")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -117,6 +127,55 @@ class DPODataset(Dataset):
             "pivot": torch.tensor(int(data["pivot"][i]), dtype=torch.int64),
             "chosen_len": torch.tensor(int(data["chosen_len"][i]), dtype=torch.int64),
             "rejected_len": torch.tensor(int(data["rejected_len"][i]), dtype=torch.int64),
+        }
+
+        data.close()
+        return result
+
+
+# ---------------------------------------------------------------------------
+# BC Contrastive Dataset
+# ---------------------------------------------------------------------------
+
+class BCContrastiveDataset(Dataset):
+    """Load BC trajectories and filter to high-reward examples.
+
+    Data format (NPZ files):
+      states  : uint8  (M, T, 2048)
+      actions : int64  (M, T)
+      reward  : float32 (M,)
+    """
+
+    def __init__(self, data_root: str, reward_threshold: float = 0.0):
+        self.samples = []  # list of (npz_path, index_within_file)
+        npz_paths = sorted(glob.glob(os.path.join(data_root, "*.npz")))
+        if not npz_paths:
+            raise FileNotFoundError(f"No .npz files found in {data_root!r}")
+
+        for path in npz_paths:
+            data = np.load(path)
+            n = len(data["states"])
+            rewards = data["reward"]
+            for i in range(n):
+                if float(rewards[i]) >= reward_threshold:
+                    self.samples.append((path, i))
+            data.close()
+
+        logging.info(
+            f"BCContrastiveDataset: {len(self.samples)} samples from {len(npz_paths)} files"
+            f" (reward >= {reward_threshold})"
+        )
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict:
+        path, i = self.samples[idx]
+        data = np.load(path)
+
+        result = {
+            "state": torch.from_numpy(data["states"][i].astype(np.uint8)),
+            "action": torch.from_numpy(data["actions"][i].astype(np.int64)),
         }
 
         data.close()

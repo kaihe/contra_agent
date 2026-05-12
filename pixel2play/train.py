@@ -31,11 +31,13 @@ def _load_config(path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 class NESLightningModule(pl.LightningModule):
-    def __init__(self, cfg: BackboneConfig, lr: float = 1e-4, dropout: float = 0.0, weight_decay: float = 1e-4):
+    def __init__(self, cfg: BackboneConfig, lr: float = 1e-4, dropout: float = 0.0, weight_decay: float = 1e-4,
+                 focal_gamma: float = 0.0, focal_alpha: torch.Tensor | None = None,
+                 class_weights: torch.Tensor | None = None):
         super().__init__()
-        self.save_hyperparameters(ignore=["cfg"])
+        self.save_hyperparameters(ignore=["cfg", "focal_alpha", "class_weights"])
         cfg.dropout = dropout
-        self.model = NESPolicyModel(cfg)
+        self.model = NESPolicyModel(cfg, focal_gamma=focal_gamma, focal_alpha=focal_alpha, class_weights=class_weights)
         self.lr = lr
         self.weight_decay = weight_decay
 
@@ -54,9 +56,9 @@ class NESLightningModule(pl.LightningModule):
 
 
     def _step(self, batch):
-        ram, dpad, button, valid_mask = batch
+        obs, dpad, button, valid_mask = batch
         action = dpad * N_BUTTONS + button
-        action_logits = self.model(ram, action)
+        action_logits = self.model(obs, action)
         return self.model.loss(action_logits, action, valid_mask)
 
     def training_step(self, batch, _):
@@ -76,7 +78,7 @@ class NESLightningModule(pl.LightningModule):
             optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
         )
         cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=total_epochs - warmup_epochs, eta_min=self.lr * 0.05
+            optimizer, T_max=max(1, total_epochs - warmup_epochs), eta_min=self.lr * 0.05
         )
         scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
@@ -90,13 +92,15 @@ class NESLightningModule(pl.LightningModule):
 
 class NESDataModule(pl.LightningDataModule):
     def __init__(self, data_root: str, n_steps: int, batch_size: int, n_val_recordings: int = 50,
-                 max_train_recordings: int = 0):
+                 max_train_recordings: int = 0, train_num_workers: int = 0, val_num_workers: int = 0):
         super().__init__()
         self.data_root = data_root
         self.n_steps = n_steps
         self.batch_size = batch_size
         self.n_val_recordings = n_val_recordings
         self.max_train_recordings = max_train_recordings  # 0 = use all
+        self.train_num_workers = train_num_workers
+        self.val_num_workers = val_num_workers
 
     def setup(self, stage=None):
         self._epoch_counter = 0
@@ -122,10 +126,12 @@ class NESDataModule(pl.LightningDataModule):
         self._epoch_counter += 1
 
     def train_dataloader(self):
-        return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
+        return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True,
+                          num_workers=self.train_num_workers, pin_memory=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, batch_size=self.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
+        return DataLoader(self.val_set, batch_size=self.batch_size, shuffle=False,
+                          num_workers=self.val_num_workers, pin_memory=True)
 
 
 # ---------------------------------------------------------------------------
@@ -170,14 +176,30 @@ def main():
         n_layers=pm.get("n_transformer_layers", 10),
         n_q_heads=pm.get("n_q_head", 16),
         n_kv_heads=pm.get("n_kv_head", 16),
-        n_thinking_tokens=pm.get("n_thinking_tokens", 1),
+        n_action_tokens=pm.get("n_action_tokens", 1),
         mask_block_size=pm.get("mask_block_size", 128),
         attention_history_len=pm.get("attention_history_len", None),
         dropout=pm.get("dropout", 0.0),
+        use_vision=pm.get("use_vision", False),
+        in_channels=pm.get("in_channels", 1),
+        ablate=pm.get("ablate", None),
     )
+
+    focal_gamma = pm.get("focal_gamma", 0.0)
+    focal_alpha = None
+    if "focal_alpha" in pm:
+        focal_alpha = torch.tensor(pm["focal_alpha"], dtype=torch.float32)
+
+    class_weights = None
+    if "class_weights" in pm:
+        class_weights = torch.tensor(pm["class_weights"], dtype=torch.float32)
 
     data_folder = stage3["training_dataset"]["data_folder"]
     checkpoint_dir = stage3.get("checkpoint_dir", CHECKPOINT_DIR)
+
+    train_num_workers = stage3["training_dataset"].get("num_workers", 0)
+    val_cfgs = stage3.get("validation_datasets", [{}])
+    val_num_workers = val_cfgs[0].get("num_workers", 0) if val_cfgs else 0
 
     datamodule = NESDataModule(
         data_root=data_folder,
@@ -185,10 +207,13 @@ def main():
         batch_size=batch_size,
         n_val_recordings=stage3.get("n_val_recordings", 50),
         max_train_recordings=args.max_train_recordings,
+        train_num_workers=train_num_workers,
+        val_num_workers=val_num_workers,
     )
 
     weight_decay = stage3["optim"]["weight_decay"]
-    module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout, weight_decay=weight_decay)
+    module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout, weight_decay=weight_decay,
+                                focal_gamma=focal_gamma, focal_alpha=focal_alpha, class_weights=class_weights)
     if not args.no_compile:
         module.model = torch.compile(module.model)
 
@@ -196,6 +221,11 @@ def main():
     from lightning.pytorch.loggers import TensorBoardLogger
 
     ckpt_dir = os.path.join(checkpoint_dir, args.exp_name) if args.exp_name else checkpoint_dir
+    os.makedirs(ckpt_dir, exist_ok=True)
+    # Save a copy of the config alongside the checkpoint for easy benchmarking
+    import shutil
+    shutil.copy(pre_args.config, os.path.join(ckpt_dir, "config.yaml"))
+
     has_val = datamodule.n_val_recordings > 0
     checkpoint_cb = ModelCheckpoint(
         dirpath=ckpt_dir,

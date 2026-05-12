@@ -13,7 +13,6 @@ policy_model:
   n_transformer_layers: 10
   n_q_head: 16
   n_kv_head: 16
-  n_thinking_tokens: 1
   transformer_dim: &transformer_dim 1024
   mask_block_size: 128
   attention_history_len: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200]

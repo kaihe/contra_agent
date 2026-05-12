@@ -22,6 +22,7 @@ import re
 from typing import Optional
 
 import contra  # registers custom ROM integration
+import cv2
 import numpy as np
 import stable_retro as retro
 import torch
@@ -31,6 +32,7 @@ from contra.events import (
     compute_reward,
 )
 from contra.inputs import DPAD_TABLE, BUTTON_TABLE
+from contra.replay import replay_actions, save_video
 from pixel2play.model.backbone import BackboneConfig
 from pixel2play.model.nes_actions import decode_combined
 from pixel2play.model.nes_policy import NESPolicyModel
@@ -54,6 +56,12 @@ def _sample(logits: torch.Tensor, temperature: float) -> int:
     if temperature == 0.0:
         return int(logits.argmax())
     return int(torch.multinomial(torch.softmax(logits / temperature, dim=-1), 1))
+
+
+def _process_frame(frame: np.ndarray, size: int = 84) -> np.ndarray:
+    """RGB → grayscale size×size."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    return cv2.resize(gray, (size, size), interpolation=cv2.INTER_AREA)
 
 
 def _decode_action(dpad: int, button: int) -> np.ndarray:
@@ -124,7 +132,10 @@ def _infer_backbone_cfg(state_dict: dict) -> BackboneConfig:
         default=9,
     ) + 1
 
-    return BackboneConfig(dim=dim, n_layers=n_layers, n_steps=200, dropout=0.0)
+    # Detect vision encoder from ResNet stem key
+    use_vision = any("backbone.img_tokenizer.stem" in k for k in state_dict)
+
+    return BackboneConfig(dim=dim, n_layers=n_layers, n_steps=200, dropout=0.0, use_vision=use_vision)
 
 
 def load_model(checkpoint_path: str, device: torch.device, config_path: Optional[str] = None) -> NESPolicyModel:
@@ -150,19 +161,31 @@ def load_model(checkpoint_path: str, device: torch.device, config_path: Optional
             n_layers=pm.get("n_transformer_layers", 10),
             n_q_heads=pm.get("n_q_head", 16),
             n_kv_heads=pm.get("n_kv_head", 16),
-            n_thinking_tokens=pm.get("n_thinking_tokens", 1),
+            n_action_tokens=pm.get("n_action_tokens", 1),
             mask_block_size=pm.get("mask_block_size", 128),
             attention_history_len=pm.get("attention_history_len", None),
             dropout=0.0,
+            use_vision=pm.get("use_vision", False),
+            in_channels=pm.get("in_channels", 1),
         )
     else:
         backbone_cfg = _infer_backbone_cfg(state_dict)
         print(f"  Inferred config: dim={backbone_cfg.dim}  n_layers={backbone_cfg.n_layers}"
               f"  n_action_tokens={backbone_cfg.n_action_tokens}")
 
-    model = NESPolicyModel(backbone_cfg)
+    class_weights = None
+    ablate = None
+    if config_path is not None:
+        pm = raw_cfg.get("policy_model", {})
+        if "class_weights" in pm:
+            class_weights = torch.tensor(pm["class_weights"], dtype=torch.float32)
+        ablate = pm.get("ablate", None)
+
+    model = NESPolicyModel(backbone_cfg, class_weights=class_weights)
     model.load_state_dict(state_dict, strict=True)
     model = model.to(device).eval()
+    if ablate is not None:
+        model.backbone.cfg.ablate = ablate
     model.backbone._build_block_masks()
     return model
 
@@ -175,15 +198,20 @@ def run_episode(
     n_steps: int = 2000,
     temperature: float = 1.0,
     device: Optional[torch.device] = None,
+    frame_size: int = 84,
 ) -> dict:
     """Run one episode and return gameplay metrics + recorded actions."""
     if device is None:
         device = next(model.parameters()).device
 
     ctx_len = model.backbone.cfg.n_steps
+    use_vision = model.backbone.cfg.use_vision
     env, _, initial_state = make_env(level)
 
-    ram_buf    = torch.zeros(ctx_len, RAM_SIZE, dtype=torch.uint8)
+    if use_vision:
+        obs_buf    = torch.zeros(ctx_len, 1, frame_size, frame_size, dtype=torch.uint8)
+    else:
+        obs_buf    = torch.zeros(ctx_len, RAM_SIZE, dtype=torch.uint8)
     action_buf = torch.zeros(ctx_len, dtype=torch.long)
     buf_len    = 0
 
@@ -194,22 +222,26 @@ def run_episode(
     level_up     = False
 
     for step in range(n_steps):
-        ram = torch.from_numpy(env.unwrapped.get_ram().copy())   # (2048,) uint8
+        if use_vision:
+            screen = env.em.get_screen().copy()  # (H, W, 3) RGB
+            frame = torch.from_numpy(_process_frame(screen, size=frame_size)).unsqueeze(0)  # (1, size, size)
+        else:
+            ram = torch.from_numpy(env.unwrapped.get_ram().copy())   # (2048,) uint8
 
         if buf_len < ctx_len:
-            ram_buf[buf_len] = ram
+            obs_buf[buf_len] = frame if use_vision else ram
             pos     = buf_len
             buf_len += 1
         else:
-            ram_buf    = torch.roll(ram_buf,    -1, dims=0)
+            obs_buf    = torch.roll(obs_buf,    -1, dims=0)
             action_buf = torch.roll(action_buf, -1, dims=0)
-            ram_buf[-1]    = ram
+            obs_buf[-1]    = frame if use_vision else ram
             action_buf[-1] = 0
             pos = ctx_len - 1
 
         with torch.no_grad():
             action_logits = model(
-                ram_buf.unsqueeze(0).to(device),
+                obs_buf.unsqueeze(0).to(device),
                 action_buf.unsqueeze(0).to(device),
             )                                                     # (1, ctx_len, N_ACTIONS)
 
@@ -259,21 +291,51 @@ def run_episode(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--config",      default=None, help="YAML config used to train the checkpoint")
+    parser.add_argument("--checkpoint", required=True,
+                        help="Path to checkpoint file, or directory containing best.ckpt + config.yaml")
+    parser.add_argument("--config",      default=None, help="YAML config used to train the checkpoint (optional if checkpoint is a dir)")
+    parser.add_argument("--frame_size",  type=int,   default=None, help="Input frame size (84 or 168). Overrides config if set.")
     parser.add_argument("--level",       default="1")
     parser.add_argument("--n_episodes",  type=int,   default=10)
     parser.add_argument("--n_steps",     type=int,   default=3000)
     parser.add_argument("--out",         default=None, help="Save single-episode actions to NPZ")
-    parser.add_argument("--out_dir",     default=None, help="Save multi-episode actions to directory")
+    parser.add_argument("--out_dir",     default='tmp', help="Save multi-episode actions to directory")
+    parser.add_argument("--save_best_video", default=None, help="Save the best episode as an MP4 video to this path")
     parser.add_argument("--device",      default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="Sampling temperature. 0=argmax (deterministic)")
+    parser.add_argument("--ablate",      default=None,
+                        help="Comma-separated token types to zero-out for ablation study. "
+                             "E.g. 'img' = action-only; 'action' = image-only.")
     args = parser.parse_args()
 
+    # Resolve checkpoint path
+    checkpoint_path = args.checkpoint
+    config_path = args.config
+    if os.path.isdir(checkpoint_path):
+        if config_path is None:
+            config_path = os.path.join(checkpoint_path, "config.yaml")
+        checkpoint_path = os.path.join(checkpoint_path, "best.ckpt")
+
     device = torch.device(args.device)
-    print(f"Loading checkpoint: {args.checkpoint}  device={device}")
-    model = load_model(args.checkpoint, device, config_path=args.config)
+    print(f"Loading checkpoint: {checkpoint_path}  device={device}")
+    model = load_model(checkpoint_path, device, config_path=config_path)
+
+    # Apply ablation for inference experiments
+    if args.ablate is not None:
+        ablate_list = [t.strip() for t in args.ablate.split(",") if t.strip()]
+        model.backbone.cfg.ablate = ablate_list
+        print(f"  Ablating tokens: {ablate_list}")
+
+    # Determine frame size: CLI arg > config > default 84
+    frame_size = 84
+    if config_path is not None and os.path.exists(config_path):
+        raw_cfg = _load_config(config_path)
+        pm = raw_cfg.get("policy_model", {})
+        frame_size = pm.get("frame_size", 84)
+    if args.frame_size is not None:
+        frame_size = args.frame_size
+    print(f"  Frame size: {frame_size}")
 
     if args.out_dir:
         os.makedirs(args.out_dir, exist_ok=True)
@@ -286,6 +348,7 @@ def main():
             n_steps=args.n_steps,
             temperature=args.temperature,
             device=device,
+            frame_size=frame_size,
         )
         results.append(result)
 
@@ -340,6 +403,27 @@ def main():
 
     if args.out_dir:
         print(f"Saved recordings → {args.out_dir}")
+
+    # ── Save best episode video ─────────────────────────────────────────────
+    if args.save_best_video:
+        # Best = level_up > xscroll > total_reward
+        def _score(r):
+            return (1 if r["level_up"] else 0, r["xscroll"], r["total_reward"])
+
+        best_idx = max(range(len(results)), key=lambda i: _score(results[i]))
+        best = results[best_idx]
+        print(f"\nBest episode: Ep {best_idx + 1:02d} | "
+              f"level_up={best['level_up']} | xscroll={best['xscroll']} | reward={best['total_reward']:.1f}")
+
+        print("Replaying best episode for video capture...")
+        replay = replay_actions(
+            best["actions"],
+            initial_state=best["initial_state"],
+            want_video=True,
+            verbose=False,
+        )
+        save_video(replay["video"], args.save_best_video)
+        print(f"Best episode video saved → {args.save_best_video}")
 
 
 if __name__ == "__main__":

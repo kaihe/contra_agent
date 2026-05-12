@@ -121,15 +121,10 @@ class DPOLightningModule(pl.LightningModule):
         device = chosen_action.device
         arange_t = torch.arange(T, device=device).unsqueeze(0)  # (1, T)
 
-        # Mask: only positions >= pivot are considered
-        mask_chosen = arange_t >= pivot.unsqueeze(1)    # (B, T)
-        mask_rejected = mask_chosen.clone()
-
-        # If lengths are available, also mask beyond actual trace length
-        if "chosen_len" in batch:
-            mask_chosen = mask_chosen & (arange_t < batch["chosen_len"].unsqueeze(1))
-        if "rejected_len" in batch:
-            mask_rejected = mask_rejected & (arange_t < batch["rejected_len"].unsqueeze(1))
+        # Mask: keep only [pivot, actual_len) — this excludes both the shared prefix
+        # and any zero-padded tokens at the end of the trace.
+        mask_chosen = (arange_t >= pivot.unsqueeze(1)) & (arange_t < batch["chosen_len"].unsqueeze(1))
+        mask_rejected = (arange_t >= pivot.unsqueeze(1)) & (arange_t < batch["rejected_len"].unsqueeze(1))
 
         # Guard against empty masks (shouldn't happen with reasonable data)
         if mask_chosen.sum() == 0 or mask_rejected.sum() == 0:
@@ -244,7 +239,7 @@ def main():
         n_layers=pm.get("n_transformer_layers", 10),
         n_q_heads=pm.get("n_q_head", 16),
         n_kv_heads=pm.get("n_kv_head", 16),
-        n_thinking_tokens=pm.get("n_thinking_tokens", 1),
+        n_action_tokens=pm.get("n_action_tokens", 1),
         mask_block_size=pm.get("mask_block_size", 128),
         attention_history_len=pm.get("attention_history_len", None),
         dropout=0.0,
@@ -266,7 +261,8 @@ def main():
     # -----------------------------------------------------------------------
     data_folder = dpo_cfg.get("data_folder", "annotate/bc_data/level_all_ram_dpo")
     kind_filter = dpo_cfg.get("kind_filter", None)
-    full_dataset = DPODataset(data_folder, kind_filter=kind_filter)
+    min_margin = dpo_cfg.get("min_reward_margin", None)
+    full_dataset = DPODataset(data_folder, kind_filter=kind_filter, min_reward_margin=min_margin)
     val_fraction = dpo_cfg.get("val_fraction", 0.1)
     n_val = int(len(full_dataset) * val_fraction)
     n_train = len(full_dataset) - n_val

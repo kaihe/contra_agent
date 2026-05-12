@@ -47,16 +47,6 @@ def _good_trace(root: SearchNode) -> list[SearchNode]:
         n = n.next
     return nodes
 
-
-def _branch_actions(head: SearchNode) -> np.ndarray:
-    acts = []
-    n = head
-    while n is not None:
-        acts.append(n.action)
-        n = n.next
-    return np.stack(acts) if acts else np.empty((0, 9), dtype=np.uint8)
-
-
 def _infer_level_goal(path: str) -> tuple[int, str]:
     fname = os.path.basename(path)
     m = re.search(r"level(\d+)", fname)
@@ -77,8 +67,21 @@ def _accumulate_reward(env, actions) -> float:
     return total
 
 
+def _branch_actions(head: SearchNode) -> np.ndarray:
+    acts = []
+    n = head
+    while n is not None:
+        acts.append(n.action)
+        n = n.next
+    return np.stack(acts) if acts else np.empty((0, 9), dtype=np.uint8)
+
+
 def collect_dpo_pairs(root: SearchNode, init_emu: bytes, env: retro.RetroEnv = None, chunk_len: int = 128) -> list[dict]:
-    """Build (good_trace, bad_trace) action pairs from the search tree."""
+    """Build (good_trace, bad_trace) action pairs from the search tree.
+
+    Bad traces are taken from the *tail* of each branch so they end with death.
+    If a branch is shorter than chunk_len, good-trace prefix is prepended.
+    """
     good_nodes   = _good_trace(root)
     good_actions = np.array(
         [n.action for n in good_nodes[1:]], dtype=np.uint8
@@ -97,11 +100,20 @@ def collect_dpo_pairs(root: SearchNode, init_emu: bytes, env: retro.RetroEnv = N
             arr = np.concatenate([arr, np.zeros((chunk_len - len(arr), 9), dtype=arr.dtype)])
         return arr
 
+    good_node_ids = {id(n) for n in good_nodes}
+
     result = []
     for diverge_idx, node in enumerate(good_nodes):
         for kind, branches in (("dead", node.dead), ("secondary", node.secondary)):
             for head in branches:
                 branch_acts = _branch_actions(head)
+
+                # Count how many leading branch nodes are still on the good trace
+                n_good_tail = 0
+                curr = head
+                while curr is not None and id(curr) in good_node_ids:
+                    n_good_tail += 1
+                    curr = curr.next
 
                 good_reward = bad_reward = None
                 if env is not None:
@@ -115,15 +127,21 @@ def collect_dpo_pairs(root: SearchNode, init_emu: bytes, env: retro.RetroEnv = N
                     rewind_state(env, branch_emu)
                     good_reward = _accumulate_reward(env, good_cont[:n_steps])
 
-                    if kind == "secondary" and bad_reward >= good_reward:
+                    # Skip pairs where the bad trace is actually better (or equal)
+                    # reward-wise than the good trace over the same horizon.
+                    if bad_reward >= good_reward:
                         continue
 
                 L           = min(len(branch_acts), chunk_len)
                 p           = min(chunk_len - L, diverge_idx)
                 chunk_start = diverge_idx - p
 
+                # If the tail L-window contains no good-trace node, discard
+                if p == 0 and len(branch_acts) - L >= n_good_tail:
+                    continue
+
                 good_trace = good_actions[chunk_start : chunk_start + chunk_len].copy()
-                branch_L   = branch_acts[:L]
+                branch_L   = branch_acts[-L:]          # tail L steps ending with death
                 bad_trace  = (
                     np.concatenate([good_actions[chunk_start:diverge_idx], branch_L])
                     if p > 0 else branch_L
@@ -177,6 +195,28 @@ def _pad_to(arr: np.ndarray, length: int) -> np.ndarray:
     return arr[:length]
 
 
+def _actions_to_dpad_button(actions_9bit: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Convert (N, 9) uint8 action vectors to (N,) int8 dpad and button indices."""
+    v = actions_9bit.astype(np.int8)
+    # button: bits 0 (B/Fire) and 8 (A/Jump)
+    button = (v[:, 0] << 1) | v[:, 8]
+
+    # dpad: bits 4 (Up), 5 (Down), 6 (Left), 7 (Right)
+    u, d, l, r = v[:, 4], v[:, 5], v[:, 6], v[:, 7]
+    dpad = np.select(
+        [
+            (u & l).astype(bool), (u & r).astype(bool),
+            (d & l).astype(bool), (d & r).astype(bool),
+            u.astype(bool), d.astype(bool),
+            l.astype(bool), r.astype(bool),
+        ],
+        [5, 6, 7, 8, 3, 4, 1, 2],
+        default=0,
+    ).astype(np.int8)
+
+    return dpad, button
+
+
 def _replay_ram(env, start_emu: bytes, actions: np.ndarray) -> np.ndarray:
     """Rewind and replay, collecting pre-action RAM at each step. Returns (T, 2048) uint8."""
     rewind_state(env, start_emu)
@@ -210,30 +250,24 @@ class DPOGraphSample:
         self.level, self.goal = _infer_level_goal(graph_path)
         self.uuid             = os.path.splitext(os.path.basename(graph_path))[0]
 
-    def process(self, out_dir: str) -> "str | None":
+    def process(self, out_dir: str, bc_out_dir: str | None = None,
+                skip_dpo: bool = False) -> "str | None":
         """Load graph, replay traces, prune actions, collect RAM obs, save NPZ.
 
         The good path is pruned and replayed once; each chosen chunk is a slice.
         Each bad trace is unique and pruned/replayed individually.
 
-        Returns the output path, or None if the graph yields no valid pairs.
+        Args:
+            out_dir: directory for DPO pair NPZs.
+            bc_out_dir: if set, also save the full pruned good trace as a BC
+                        recording (ram, dpad, button) in this directory.
+            skip_dpo: if True, skip DPO pair generation entirely and only
+                      export the BC trace.
+
+        Returns the output path (DPO or BC), or None if the graph yields nothing.
         """
-        os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, f"{self.uuid}.npz")
-
-        if os.path.isfile(out_path):
-            print(f"  {self.uuid}: already exists, skipping")
-            return out_path
-
         root, init_emu = load_graph(self.graph_path)
         env            = _make_env(self.level)
-
-        # raw pairs: actions + rewards, no observations yet
-        pairs = collect_dpo_pairs(root, init_emu, env)
-        if not pairs:
-            env.close()
-            print(f"  {self.uuid}: no valid pairs")
-            return None
 
         good_nodes   = _good_trace(root)
         good_actions = (
@@ -258,6 +292,41 @@ class DPOGraphSample:
         # emu snapshots at each good-path step, used to rewind for bad-trace pruning
         emu_states   = _collect_emu_states(env, init_emu, pruned_good)    # G+1 entries
 
+        # ── export full good trace as BC data ──────────────────────────────────
+        bc_path = None
+        if bc_out_dir is not None:
+            os.makedirs(bc_out_dir, exist_ok=True)
+            bc_path = os.path.join(bc_out_dir, f"{self.uuid}.npz")
+            if not os.path.isfile(bc_path):
+                dpad, button = _actions_to_dpad_button(pruned_good)
+                np.savez_compressed(
+                    bc_path,
+                    ram=good_ram_all.astype(np.uint8),
+                    dpad=dpad.astype(np.int8),
+                    button=button.astype(np.int8),
+                )
+                print(f"  {self.uuid}: BC trace ({len(pruned_good)} steps) → {bc_path}")
+            else:
+                print(f"  {self.uuid}: BC trace already exists, skipping")
+
+        if skip_dpo:
+            env.close()
+            return bc_path
+
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{self.uuid}.npz")
+
+        if os.path.isfile(out_path):
+            print(f"  {self.uuid}: DPO pairs already exist, skipping")
+            return out_path
+
+        # raw pairs: actions + rewards, no observations yet
+        pairs = collect_dpo_pairs(root, init_emu, env)
+        if not pairs:
+            env.close()
+            print(f"  {self.uuid}: no valid DPO pairs")
+            return bc_path
+
         CHUNK = 128  # must match collect_dpo_pairs chunk_len
 
         chosen_rams,   chosen_acts   = [], []
@@ -267,7 +336,13 @@ class DPOGraphSample:
         good_rewards,  bad_rewards   = [], []
 
         for pair in pairs:
-            cs = pair["prefix_len"]  # chunk_start index into good path
+            cs = pair["prefix_len"]  # diverge_idx into good path
+
+            # bad trace is unique per pair — prune first, discard if too short
+            chunk_start_emu = emu_states[cs]
+            bad_pruned = prune_actions(pair["bad_trace"], chunk_start_emu, verbose=False, env=env)
+            if len(bad_pruned) < CHUNK:
+                continue
 
             # slice chosen arrays from the pre-computed good path (no re-pruning)
             good_act_slice = pruned_good[cs : cs + CHUNK]
@@ -275,9 +350,6 @@ class DPOGraphSample:
             chosen_acts.append(_pad_to(good_act_slice, CHUNK))
             chosen_rams.append(_pad_to(good_ram_all[cs : cs + CHUNK], CHUNK))
 
-            # bad trace is unique per pair — prune and replay individually
-            chunk_start_emu = emu_states[cs]
-            bad_pruned = prune_actions(pair["bad_trace"], chunk_start_emu, verbose=False, env=env)
             rejected_lens.append(len(bad_pruned))
             rejected_acts.append(_pad_to(bad_pruned, CHUNK))
             rejected_rams.append(_pad_to(_replay_ram(env, chunk_start_emu, bad_pruned), CHUNK))
@@ -290,6 +362,10 @@ class DPOGraphSample:
         env.close()
 
         N = len(chosen_rams)
+        if N == 0:
+            print(f"  {self.uuid}: no valid DPO pairs after filtering")
+            return bc_path
+
         np.savez_compressed(
             out_path,
             chosen_ram       = np.stack(chosen_rams).astype(np.uint8),
@@ -305,7 +381,7 @@ class DPOGraphSample:
             n_pairs          = np.array(N,             dtype=np.int32),
             level            = np.array(self.level,    dtype=np.int32),
         )
-        print(f"  {self.uuid}: {N} pairs → {out_path}")
+        print(f"  {self.uuid}: {N} DPO pairs → {out_path}")
         return out_path
 
     def __repr__(self) -> str:
