@@ -28,7 +28,6 @@ class NESPolicyModel(nn.Module):
         cfg: BackboneConfig,
         focal_gamma: float = 0.0,
         focal_alpha: torch.Tensor | None = None,
-        class_weights: torch.Tensor | None = None,
     ):
         super().__init__()
         D = cfg.dim
@@ -44,7 +43,6 @@ class NESPolicyModel(nn.Module):
         # Loss hyperparameters
         self.focal_gamma = focal_gamma
         self.focal_alpha = focal_alpha  # (N_ACTIONS,) tensor or None
-        self.class_weights = class_weights  # (N_ACTIONS,) tensor or None
 
     def _action_in(self, action: torch.Tensor) -> torch.Tensor:
         # (B, T) → (B, T, 1, D)
@@ -55,7 +53,7 @@ class NESPolicyModel(nn.Module):
         obs: torch.Tensor,    # (B, T, 2048) or (B, T, C, H, W)
         action: torch.Tensor, # (B, T)  int64
     ) -> torch.Tensor:
-        """Run the backbone transformer only. Returns action_out_tokens (B, T, D)."""
+        """Run the backbone transformer only. Returns per-timestep representation (B, T, D)."""
         return self.backbone._encode(obs, self._action_in(action))
 
     def forward(
@@ -74,9 +72,8 @@ class NESPolicyModel(nn.Module):
         valid_mask: torch.Tensor,     # (B, T) bool
     ) -> torch.Tensor:
         mask = valid_mask.flatten()
-        weight = self.class_weights.to(action_logits.device) if self.class_weights is not None else None
         ce = F.cross_entropy(
-            action_logits.flatten(0, 1), action_labels.flatten(), reduction="none", weight=weight
+            action_logits.flatten(0, 1), action_labels.flatten(), reduction="none"
         )
 
         if self.focal_gamma > 0.0:

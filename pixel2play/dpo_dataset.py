@@ -120,14 +120,19 @@ class DPODataset(Dataset):
         rejected_action = _convert_actions(data["rejected_actions"][i]) # (T,) int64
 
         result = {
-            "chosen_ram": torch.from_numpy(data["chosen_ram"][i].astype(np.uint8)),
             "chosen_action": torch.from_numpy(chosen_action.astype(np.int64)),
-            "rejected_ram": torch.from_numpy(data["rejected_ram"][i].astype(np.uint8)),
             "rejected_action": torch.from_numpy(rejected_action.astype(np.int64)),
             "pivot": torch.tensor(int(data["pivot"][i]), dtype=torch.int64),
             "chosen_len": torch.tensor(int(data["chosen_len"][i]), dtype=torch.int64),
             "rejected_len": torch.tensor(int(data["rejected_len"][i]), dtype=torch.int64),
         }
+        
+        if "chosen_frames" in data:
+            result["chosen_obs"] = torch.from_numpy(data["chosen_frames"][i].astype(np.float32) / 255.0)
+            result["rejected_obs"] = torch.from_numpy(data["rejected_frames"][i].astype(np.float32) / 255.0)
+        else:
+            result["chosen_obs"] = torch.from_numpy(data["chosen_ram"][i].astype(np.float32) / 255.0)
+            result["rejected_obs"] = torch.from_numpy(data["rejected_ram"][i].astype(np.float32) / 255.0)
 
         data.close()
         return result

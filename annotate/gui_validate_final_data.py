@@ -23,11 +23,18 @@ import numpy as np
 import pygame
 
 from annotate.proto.video_annotation_pb2 import VideoAnnotation  # type: ignore
+from contra.game_state import describe_ram
 
 
-PANEL_HEIGHT = 200    # pixels below the video for annotation + action display
-FPS_PLAYBACK = 30
-SCALE        = 4      # upscale 192x192 frames
+PANEL_HEIGHT  = 200   # pixels below the video for annotation + action display
+STATE_PANEL_W = 360   # right-side panel for game state (shown when ram.npy exists)
+FPS_PLAYBACK  = 30
+SCALE         = 4     # upscale 192x192 frames
+
+# colours for game-state panel
+_C_SECTION = (255, 215, 60)   # amber  — section headers ("Player:", "Scene:", …)
+_C_TBLHDR  = (100, 100, 100)  # dim    — table column headers / separators
+_C_DATA    = (200, 200, 200)  # light  — regular data lines
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +141,34 @@ def wrap_text(text: str, font: pygame.font.Font, max_width: int) -> list[str]:
 # Main viewer
 # ---------------------------------------------------------------------------
 
+def _draw_state_panel(screen, font, ram_row, panel_x: int, panel_h: int):
+    """Render the game-state description into the right-side panel."""
+    text = describe_ram(ram_row)
+    y = 8
+    for line in text.split("\n"):
+        if y + 14 > panel_h:
+            break
+        stripped = line.strip()
+        if not stripped:
+            y += 6
+            continue
+        if not line.startswith(" "):
+            color = _C_SECTION
+        elif "----" in stripped or (stripped.startswith("Slot") and "Type" in stripped):
+            color = _C_TBLHDR
+        else:
+            color = _C_DATA
+        screen.blit(font.render(line, True, color), (panel_x + 6, y))
+        y += 13
+
+
 def main(sample_dir: str):
     video_path, fps, narrative, ann_ranges, frame_annotations = load_sample(sample_dir)
+
+    # Optional per-frame RAM snapshots: shape (N, 2048) uint8.
+    # Save alongside the video as ram.npy to enable the game-state panel.
+    ram_path  = os.path.join(sample_dir, "ram.npy")
+    ram_states = np.load(ram_path) if os.path.isfile(ram_path) else None
 
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -146,16 +179,19 @@ def main(sample_dir: str):
     ok, first = cap.read()
     h, w = first.shape[:2]
     disp_w, disp_h = w * SCALE, h * SCALE
+    total_w = disp_w + STATE_PANEL_W
 
     pygame.init()
-    screen = pygame.display.set_mode((disp_w, disp_h + PANEL_HEIGHT))
+    screen = pygame.display.set_mode((total_w, disp_h + PANEL_HEIGHT))
     sample_name = os.path.basename(sample_dir.rstrip("/\\"))
-    pygame.display.set_caption(f"Validator — {sample_name}")
+    ram_tag = "" if ram_states is None else "  [+RAM]"
+    pygame.display.set_caption(f"Validator — {sample_name}{ram_tag}")
     clock = pygame.time.Clock()
 
     font_ann    = pygame.font.SysFont("monospace", 15)
     font_action = pygame.font.SysFont("monospace", 14)
     font_info   = pygame.font.SysFont("monospace", 13)
+    font_state  = pygame.font.SysFont("monospace", 11)
 
     current_frame = 0
     paused        = True
@@ -234,8 +270,17 @@ def main(sample_dir: str):
         # --- Draw video ---
         screen.blit(get_surf(current_frame), (0, 0))
 
-        # --- Draw panel ---
-        pygame.draw.rect(screen, (20, 20, 20), pygame.Rect(0, disp_h, disp_w, PANEL_HEIGHT))
+        # --- Draw game-state panel (right of video) ---
+        pygame.draw.rect(screen, (15, 15, 15), pygame.Rect(disp_w, 0, STATE_PANEL_W, disp_h))
+        pygame.draw.line(screen, (50, 50, 50), (disp_w, 0), (disp_w, disp_h))
+        if ram_states is not None and current_frame < len(ram_states):
+            _draw_state_panel(screen, font_state, ram_states[current_frame], disp_w, disp_h)
+        else:
+            msg = "no ram.npy" if ram_states is None else "frame out of range"
+            screen.blit(font_state.render(msg, True, (60, 60, 60)), (disp_w + 6, 8))
+
+        # --- Draw bottom panel (full width) ---
+        pygame.draw.rect(screen, (20, 20, 20), pygame.Rect(0, disp_h, total_w, PANEL_HEIGHT))
 
         seconds = current_frame / fps
         mm, ss  = divmod(int(seconds), 60)
@@ -255,14 +300,14 @@ def main(sample_dir: str):
         else:
             screen.blit(font_ann.render("— no annotation —", True, (80, 80, 80)), (8, disp_h + 26))
 
-        # Input action (cyan), two rows below annotation area
+        # Input action (cyan)
         fa = frame_annotations[current_frame] if current_frame < len(frame_annotations) else None
         action_str = action_label(fa)
         action_y   = disp_h + PANEL_HEIGHT - 38
         screen.blit(font_info.render("action:", True, (100, 100, 100)), (8, action_y))
         screen.blit(font_action.render(action_str, True, (80, 220, 220)), (72, action_y))
 
-        # Timeline bar
+        # Timeline bar (spans video width only)
         bar_y = disp_h + PANEL_HEIGHT - 14
         bar_w = disp_w - 16
         pygame.draw.rect(screen, (50, 50, 50), (8, bar_y, bar_w, 8))

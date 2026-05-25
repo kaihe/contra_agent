@@ -46,7 +46,7 @@ def load_model_from_checkpoint(checkpoint_path: str, backbone_cfg: BackboneConfi
     state_dict = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
 
     module = NESLightningModule(backbone_cfg, lr=1e-4)
-    module.load_state_dict(state_dict, strict=True)
+    module.load_state_dict(state_dict, strict=False)
     return module.model
 
 
@@ -88,7 +88,7 @@ class DPOLightningModule(pl.LightningModule):
     def _compute_logprobs(
         self,
         model: NESPolicyModel,
-        ram: torch.Tensor,     # (B, T, 2048)
+        obs: torch.Tensor,     # (B, T, 2048) or (B, T, 1, 168, 168)
         action: torch.Tensor,  # (B, T) int64
         mask: torch.Tensor,    # (B, T) bool
     ) -> torch.Tensor:
@@ -96,7 +96,7 @@ class DPOLightningModule(pl.LightningModule):
 
         Returns shape (B,).
         """
-        logits = model(ram, action)  # (B, T, N_ACTIONS)
+        logits = model(obs, action)  # (B, T, N_ACTIONS)
         logprobs = F.log_softmax(logits, dim=-1)
         # Gather log-prob of the taken action at each step
         action_logprobs = logprobs.gather(-1, action.unsqueeze(-1)).squeeze(-1)  # (B, T)
@@ -111,9 +111,9 @@ class DPOLightningModule(pl.LightningModule):
             return action_logprobs.sum(dim=-1)
 
     def _step(self, batch: dict):
-        chosen_ram = batch["chosen_ram"]
+        chosen_obs = batch["chosen_obs"]
         chosen_action = batch["chosen_action"]
-        rejected_ram = batch["rejected_ram"]
+        rejected_obs = batch["rejected_obs"]
         rejected_action = batch["rejected_action"]
         pivot = batch["pivot"]  # (B,)
 
@@ -132,19 +132,19 @@ class DPOLightningModule(pl.LightningModule):
 
         # Policy log-probs
         policy_chosen_logps = self._compute_logprobs(
-            self.policy_model, chosen_ram, chosen_action, mask_chosen
+            self.policy_model, chosen_obs, chosen_action, mask_chosen
         )
         policy_rejected_logps = self._compute_logprobs(
-            self.policy_model, rejected_ram, rejected_action, mask_rejected
+            self.policy_model, rejected_obs, rejected_action, mask_rejected
         )
 
         # Reference log-probs (no grad)
         with torch.no_grad():
             ref_chosen_logps = self._compute_logprobs(
-                self.ref_model, chosen_ram, chosen_action, mask_chosen
+                self.ref_model, chosen_obs, chosen_action, mask_chosen
             )
             ref_rejected_logps = self._compute_logprobs(
-                self.ref_model, rejected_ram, rejected_action, mask_rejected
+                self.ref_model, rejected_obs, rejected_action, mask_rejected
             )
 
         # DPO loss
@@ -243,6 +243,10 @@ def main():
         mask_block_size=pm.get("mask_block_size", 128),
         attention_history_len=pm.get("attention_history_len", None),
         dropout=0.0,
+        grid_size=pm.get("grid_size", 2),
+        use_vision=pm.get("use_vision", False),
+        vision_depth=pm.get("vision_depth", 4),
+        in_channels=pm.get("in_channels", 1),
     )
 
     ref_ckpt = dpo_cfg.get("ref_checkpoint")
@@ -281,13 +285,13 @@ def main():
     batch_size = dpo_cfg.get("batch_size", 8)
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
-        num_workers=2, pin_memory=True, persistent_workers=True,
+        num_workers=8, pin_memory=True, persistent_workers=True,
     )
     val_loader = None
     if val_dataset is not None:
         val_loader = DataLoader(
             val_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=2, pin_memory=True, persistent_workers=True,
+            num_workers=8, pin_memory=True, persistent_workers=True,
         )
 
     # -----------------------------------------------------------------------
@@ -305,11 +309,11 @@ def main():
     # Initialize policy from the same checkpoint as reference
     logging.info("Initializing policy model from reference checkpoint")
     policy_state = load_model_from_checkpoint(ref_ckpt, backbone_cfg).state_dict()
-    module.policy_model.load_state_dict(policy_state, strict=True)
+    module.policy_model.load_state_dict(policy_state, strict=False)
 
     if not args.no_compile:
         module.policy_model = torch.compile(module.policy_model)
-        # Note: ref_model stays un-compiled since it's frozen and only used in no_grad
+        module.ref_model = torch.compile(module.ref_model)
 
     # -----------------------------------------------------------------------
     # Trainer
@@ -347,6 +351,7 @@ def main():
         limit_val_batches=dpo_cfg.get("limit_val_batches", None),
         check_val_every_n_epoch=1,
         precision="bf16-mixed",
+        accumulate_grad_batches=dpo_cfg.get("accumulate_grad_batches", 1),
         callbacks=callbacks,
         fast_dev_run=args.fast_dev_run,
         default_root_dir="tmp",

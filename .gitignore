@@ -34,6 +34,7 @@ __pycache__/
 
 # Data directories
 annotate/bc_data/
+vla/data/
 
 # tmp files
 tmp/

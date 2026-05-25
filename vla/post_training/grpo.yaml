@@ -1,0 +1,26 @@
+# vla/grpo.yaml
+name: grpo
+
+# Model
+load_bc: tmp/vla/unfrozen_400/best.pt          # BC checkpoint to initialise policy & ref
+freeze_vlm: false
+grad_checkpoint: true
+
+# GRPO
+G: 64                             # group size = all episodes per iter → 1 group, stable advantages
+K: 48                             # actions per episode (matches MC search rollout_len)
+T: 2                              # action chunk length (from BC)
+gamma: 0.99                       # discount factor
+clip_eps: 0.2                     # PPO clipping
+beta_kl: 0.05                     # KL penalty coefficient
+
+# Training
+max_num_rollout: 6400             # total episodes to collect before stopping (G=64 → 100 iters)
+update_epochs: 4                  # epochs over the rollout buffer
+batch_size: 24
+lr: 2.0e-5                        # low LR because BC prior is strong
+weight_decay: 1.0e-2
+grad_clip: 1.0
+workers: 8
+
+device: cuda

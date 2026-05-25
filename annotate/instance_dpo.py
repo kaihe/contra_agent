@@ -21,8 +21,8 @@ T = chunk_len = 128 (padded with zeros if trace is shorter)
 import os
 import re
 import shutil
-
 import numpy as np
+import cv2
 import stable_retro as retro
 
 from contra.replay import rewind_state, step_env
@@ -161,14 +161,14 @@ def collect_dpo_pairs(root: SearchNode, init_emu: bytes, env: retro.RetroEnv = N
     return result
 
 
-def _make_env(level: int) -> retro.RetroEnv:
+def _make_env(level: int, use_vision: bool = False) -> retro.RetroEnv:
     state_label = _STATE_BY_LEVEL[level]
     use_spread  = level > 1
     env = retro.make(
         game=_GAME,
         state=retro.State.NONE if use_spread else state_label,
         use_restricted_actions=retro.Actions.ALL,
-        obs_type=retro.Observations.RAM,
+        obs_type=retro.Observations.IMAGE if use_vision else retro.Observations.RAM,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
@@ -227,6 +227,18 @@ def _replay_ram(env, start_emu: bytes, actions: np.ndarray) -> np.ndarray:
         step_env(env, act)
     return ram_buf
 
+def _replay_frames(env, start_emu: bytes, actions: np.ndarray, frame_size: int = 168) -> np.ndarray:
+    """Rewind and replay, collecting pre-action frames at each step. Returns (T, 1, frame_size, frame_size) uint8."""
+    rewind_state(env, start_emu)
+    T       = len(actions)
+    frame_buf = np.empty((T, 1, frame_size, frame_size), dtype=np.uint8)
+    for i, act in enumerate(actions):
+        screen = env.em.get_screen()
+        gray = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
+        frame_buf[i, 0] = cv2.resize(gray, (frame_size, frame_size), interpolation=cv2.INTER_AREA)
+        step_env(env, act)
+    return frame_buf
+
 
 def _verify_win(env, init_emu: bytes, actions: np.ndarray, goal: str) -> bool:
     """Replay actions and return True if a level-up or game-clear is detected."""
@@ -251,7 +263,7 @@ class DPOGraphSample:
         self.uuid             = os.path.splitext(os.path.basename(graph_path))[0]
 
     def process(self, out_dir: str, bc_out_dir: str | None = None,
-                skip_dpo: bool = False) -> "str | None":
+                skip_dpo: bool = False, use_vision: bool = False) -> "str | None":
         """Load graph, replay traces, prune actions, collect RAM obs, save NPZ.
 
         The good path is pruned and replayed once; each chosen chunk is a slice.
@@ -267,7 +279,7 @@ class DPOGraphSample:
         Returns the output path (DPO or BC), or None if the graph yields nothing.
         """
         root, init_emu = load_graph(self.graph_path)
-        env            = _make_env(self.level)
+        env            = _make_env(self.level, use_vision=use_vision)
 
         good_nodes   = _good_trace(root)
         good_actions = (
@@ -287,8 +299,12 @@ class DPOGraphSample:
             print(f"  {self.uuid}: pruned trace failed win check → moved to {_BAD_PRUNE_DIR}")
             return None
 
-        # replay once to get RAM for every good-path step
-        good_ram_all = _replay_ram(env, init_emu, pruned_good)            # (G, 2048)
+        # replay once to get obs for every good-path step
+        if use_vision:
+            good_obs_all = _replay_frames(env, init_emu, pruned_good)     # (G, 1, 168, 168)
+        else:
+            good_obs_all = _replay_ram(env, init_emu, pruned_good)        # (G, 2048)
+
         # emu snapshots at each good-path step, used to rewind for bad-trace pruning
         emu_states   = _collect_emu_states(env, init_emu, pruned_good)    # G+1 entries
 
@@ -299,12 +315,20 @@ class DPOGraphSample:
             bc_path = os.path.join(bc_out_dir, f"{self.uuid}.npz")
             if not os.path.isfile(bc_path):
                 dpad, button = _actions_to_dpad_button(pruned_good)
-                np.savez_compressed(
-                    bc_path,
-                    ram=good_ram_all.astype(np.uint8),
-                    dpad=dpad.astype(np.int8),
-                    button=button.astype(np.int8),
-                )
+                if use_vision:
+                    np.savez_compressed(
+                        bc_path,
+                        frames=good_obs_all,
+                        dpad=dpad.astype(np.int8),
+                        button=button.astype(np.int8),
+                    )
+                else:
+                    np.savez_compressed(
+                        bc_path,
+                        ram=good_obs_all,
+                        dpad=dpad.astype(np.int8),
+                        button=button.astype(np.int8),
+                    )
                 print(f"  {self.uuid}: BC trace ({len(pruned_good)} steps) → {bc_path}")
             else:
                 print(f"  {self.uuid}: BC trace already exists, skipping")
@@ -329,8 +353,8 @@ class DPOGraphSample:
 
         CHUNK = 128  # must match collect_dpo_pairs chunk_len
 
-        chosen_rams,   chosen_acts   = [], []
-        rejected_rams, rejected_acts = [], []
+        chosen_obs,   chosen_acts   = [], []
+        rejected_obs, rejected_acts = [], []
         chosen_lens, rejected_lens   = [], []
         pivots, kinds                = [], []
         good_rewards,  bad_rewards   = [], []
@@ -348,11 +372,15 @@ class DPOGraphSample:
             good_act_slice = pruned_good[cs : cs + CHUNK]
             chosen_lens.append(len(good_act_slice))
             chosen_acts.append(_pad_to(good_act_slice, CHUNK))
-            chosen_rams.append(_pad_to(good_ram_all[cs : cs + CHUNK], CHUNK))
+            chosen_obs.append(_pad_to(good_obs_all[cs : cs + CHUNK], CHUNK))
 
             rejected_lens.append(len(bad_pruned))
             rejected_acts.append(_pad_to(bad_pruned, CHUNK))
-            rejected_rams.append(_pad_to(_replay_ram(env, chunk_start_emu, bad_pruned), CHUNK))
+            
+            if use_vision:
+                rejected_obs.append(_pad_to(_replay_frames(env, chunk_start_emu, bad_pruned), CHUNK))
+            else:
+                rejected_obs.append(_pad_to(_replay_ram(env, chunk_start_emu, bad_pruned), CHUNK))
 
             pivots.append(pair["pivot"])
             kinds.append(0 if pair["kind"] == "dead" else 1)
@@ -361,26 +389,32 @@ class DPOGraphSample:
 
         env.close()
 
-        N = len(chosen_rams)
+        N = len(chosen_obs)
         if N == 0:
             print(f"  {self.uuid}: no valid DPO pairs after filtering")
             return bc_path
 
-        np.savez_compressed(
-            out_path,
-            chosen_ram       = np.stack(chosen_rams).astype(np.uint8),
-            chosen_actions   = np.stack(chosen_acts).astype(np.uint8),
-            rejected_ram     = np.stack(rejected_rams).astype(np.uint8),
-            rejected_actions = np.stack(rejected_acts).astype(np.uint8),
-            chosen_len       = np.array(chosen_lens,   dtype=np.int16),
-            rejected_len     = np.array(rejected_lens, dtype=np.int16),
-            pivot            = np.array(pivots,        dtype=np.int16),
-            kind             = np.array(kinds,         dtype=np.uint8),
-            good_reward      = np.array(good_rewards,  dtype=np.float32),
-            bad_reward       = np.array(bad_rewards,   dtype=np.float32),
-            n_pairs          = np.array(N,             dtype=np.int32),
-            level            = np.array(self.level,    dtype=np.int32),
-        )
+        save_dict = {
+            "chosen_actions"   : np.stack(chosen_acts).astype(np.uint8),
+            "rejected_actions" : np.stack(rejected_acts).astype(np.uint8),
+            "chosen_len"       : np.array(chosen_lens,   dtype=np.int16),
+            "rejected_len"     : np.array(rejected_lens, dtype=np.int16),
+            "pivot"            : np.array(pivots,        dtype=np.int16),
+            "kind"             : np.array(kinds,         dtype=np.uint8),
+            "good_reward"      : np.array(good_rewards,  dtype=np.float32),
+            "bad_reward"       : np.array(bad_rewards,   dtype=np.float32),
+            "n_pairs"          : np.array(N,             dtype=np.int32),
+            "level"            : np.array(self.level,    dtype=np.int32),
+        }
+        
+        if use_vision:
+            save_dict["chosen_frames"] = np.stack(chosen_obs).astype(np.uint8)
+            save_dict["rejected_frames"] = np.stack(rejected_obs).astype(np.uint8)
+        else:
+            save_dict["chosen_ram"] = np.stack(chosen_obs).astype(np.uint8)
+            save_dict["rejected_ram"] = np.stack(rejected_obs).astype(np.uint8)
+
+        np.savez_compressed(out_path, **save_dict)
         print(f"  {self.uuid}: {N} DPO pairs → {out_path}")
         return out_path
 

@@ -32,12 +32,11 @@ def _load_config(path: str) -> dict:
 
 class NESLightningModule(pl.LightningModule):
     def __init__(self, cfg: BackboneConfig, lr: float = 1e-4, dropout: float = 0.0, weight_decay: float = 1e-4,
-                 focal_gamma: float = 0.0, focal_alpha: torch.Tensor | None = None,
-                 class_weights: torch.Tensor | None = None):
+                 focal_gamma: float = 0.0, focal_alpha: torch.Tensor | None = None):
         super().__init__()
-        self.save_hyperparameters(ignore=["cfg", "focal_alpha", "class_weights"])
+        self.save_hyperparameters(ignore=["cfg", "focal_alpha"])
         cfg.dropout = dropout
-        self.model = NESPolicyModel(cfg, focal_gamma=focal_gamma, focal_alpha=focal_alpha, class_weights=class_weights)
+        self.model = NESPolicyModel(cfg, focal_gamma=focal_gamma, focal_alpha=focal_alpha)
         self.lr = lr
         self.weight_decay = weight_decay
 
@@ -182,6 +181,7 @@ def main():
         dropout=pm.get("dropout", 0.0),
         use_vision=pm.get("use_vision", False),
         in_channels=pm.get("in_channels", 1),
+        grid_size=pm.get("grid_size", 2),
         ablate=pm.get("ablate", None),
     )
 
@@ -189,10 +189,6 @@ def main():
     focal_alpha = None
     if "focal_alpha" in pm:
         focal_alpha = torch.tensor(pm["focal_alpha"], dtype=torch.float32)
-
-    class_weights = None
-    if "class_weights" in pm:
-        class_weights = torch.tensor(pm["class_weights"], dtype=torch.float32)
 
     data_folder = stage3["training_dataset"]["data_folder"]
     checkpoint_dir = stage3.get("checkpoint_dir", CHECKPOINT_DIR)
@@ -213,7 +209,7 @@ def main():
 
     weight_decay = stage3["optim"]["weight_decay"]
     module = NESLightningModule(backbone_cfg, lr=lr, dropout=dropout, weight_decay=weight_decay,
-                                focal_gamma=focal_gamma, focal_alpha=focal_alpha, class_weights=class_weights)
+                                focal_gamma=focal_gamma, focal_alpha=focal_alpha)
     if not args.no_compile:
         module.model = torch.compile(module.model)
 

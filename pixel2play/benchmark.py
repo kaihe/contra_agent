@@ -151,6 +151,29 @@ def load_model(checkpoint_path: str, device: torch.device, config_path: Optional
         state_dict = {k.replace("model._orig_mod.", "model."): v for k, v in state_dict.items()}
         state_dict = {k[len("model."):]: v for k, v in state_dict.items() if k.startswith("model.")}
 
+    # Infer grid_size and vision_depth from checkpoint state_dict directly
+    grid_size = 2
+    vision_depth = 4
+    if "backbone.img_pos" in state_dict:
+        img_pos_shape = state_dict["backbone.img_pos"].shape
+        grid_size = int(img_pos_shape[1] ** 0.5)
+    elif "model.backbone.img_pos" in state_dict:
+        img_pos_shape = state_dict["model.backbone.img_pos"].shape
+        grid_size = int(img_pos_shape[1] ** 0.5)
+        
+    proj_weight_key = None
+    if "backbone.img_tokenizer.proj.0.weight" in state_dict:
+        proj_weight_key = "backbone.img_tokenizer.proj.0.weight"
+    elif "model.backbone.img_tokenizer.proj.0.weight" in state_dict:
+        proj_weight_key = "model.backbone.img_tokenizer.proj.0.weight"
+        
+    if proj_weight_key:
+        proj_shape = state_dict[proj_weight_key].shape
+        if proj_shape[1] == 128:
+            vision_depth = 3
+        elif proj_shape[1] == 256:
+            vision_depth = 4
+
     if config_path is not None:
         raw_cfg = _load_config(config_path)
         shared  = raw_cfg["shared"]
@@ -167,22 +190,23 @@ def load_model(checkpoint_path: str, device: torch.device, config_path: Optional
             dropout=0.0,
             use_vision=pm.get("use_vision", False),
             in_channels=pm.get("in_channels", 1),
+            grid_size=grid_size,
+            vision_depth=vision_depth,
         )
     else:
         backbone_cfg = _infer_backbone_cfg(state_dict)
+        backbone_cfg.grid_size = grid_size
+        backbone_cfg.vision_depth = vision_depth
         print(f"  Inferred config: dim={backbone_cfg.dim}  n_layers={backbone_cfg.n_layers}"
               f"  n_action_tokens={backbone_cfg.n_action_tokens}")
 
-    class_weights = None
     ablate = None
     if config_path is not None:
         pm = raw_cfg.get("policy_model", {})
-        if "class_weights" in pm:
-            class_weights = torch.tensor(pm["class_weights"], dtype=torch.float32)
         ablate = pm.get("ablate", None)
 
-    model = NESPolicyModel(backbone_cfg, class_weights=class_weights)
-    model.load_state_dict(state_dict, strict=True)
+    model = NESPolicyModel(backbone_cfg)
+    model.load_state_dict(state_dict, strict=False)
     model = model.to(device).eval()
     if ablate is not None:
         model.backbone.cfg.ablate = ablate

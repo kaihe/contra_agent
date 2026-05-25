@@ -50,39 +50,55 @@ class ResBlock(nn.Module):
 
 
 class SmallResNetEncoder(nn.Module):
-    """3-block ResNet encoder: 32 → 64 → 128 channels.
+    """4-stage ResNet-18-Lite encoder: 32 → 64 → 128 → 256 channels.
     Outputs a grid of spatial tokens rather than a single flattened token.
     """
 
-    def __init__(self, embed_dim: int = 1024, in_channels: int = 1, grid_size: int = 6):
+    def __init__(self, embed_dim: int = 1024, in_channels: int = 1, grid_size: int = 4, depth: int = 4):
         super().__init__()
         self.grid_size = grid_size
+        self.depth = depth
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=3, stride=2,
                       padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(),
         )
-        self.block1 = ResBlock(32, 32)
-        self.down1 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, stride=2,
-                      padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
+        
+        # Stage 1: 32 channels (no downsample)
+        self.stage1 = nn.Sequential(
+            ResBlock(32, 32),
+            ResBlock(32, 32)
         )
-        self.block2 = ResBlock(64, 64)
-        self.down2 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=2,
-                      padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
+        
+        # Stage 2: 64 channels (downsample stride=2)
+        self.stage2 = nn.Sequential(
+            ResBlock(32, 64, stride=2),
+            ResBlock(64, 64)
         )
-        self.block3 = ResBlock(128, 128)
+        
+        # Stage 3: 128 channels (downsample stride=2)
+        self.stage3 = nn.Sequential(
+            ResBlock(64, 128, stride=2),
+            ResBlock(128, 128)
+        )
+        
+        if self.depth >= 4:
+            # Stage 4: 256 channels (downsample stride=2)
+            self.stage4 = nn.Sequential(
+                ResBlock(128, 256, stride=2),
+                ResBlock(256, 256)
+            )
+            final_channels = 256
+        else:
+            self.stage4 = nn.Identity()
+            final_channels = 128
+        
         self.pool = nn.AdaptiveAvgPool2d(grid_size)
         
         # Project each spatial location's channels to embed_dim independently
         self.proj = nn.Sequential(
-            nn.Linear(128, embed_dim),
+            nn.Linear(final_channels, embed_dim),
             nn.LayerNorm(embed_dim),
         )
 
@@ -98,14 +114,14 @@ class SmallResNetEncoder(nn.Module):
         x = x.float() / 255.0
 
         x = self.stem(x)      # (B*T, 32, H/2, H/2)
-        x = self.block1(x)    # (B*T, 32, H/2, H/2)
-        x = self.down1(x)     # (B*T, 64, H/4, H/4)
-        x = self.block2(x)    # (B*T, 64, H/4, H/4)
-        x = self.down2(x)     # (B*T, 128, H/8, H/8)
-        x = self.block3(x)    # (B*T, 128, H/8, H/8)
-        x = self.pool(x)      # (B*T, 128, grid_size, grid_size)
+        x = self.stage1(x)    # (B*T, 32, H/2, H/2)
+        x = self.stage2(x)    # (B*T, 64, H/4, H/4)
+        x = self.stage3(x)    # (B*T, 128, H/8, H/8)
+        if self.depth >= 4:
+            x = self.stage4(x)    # (B*T, 256, H/16, H/16)
+        x = self.pool(x)      # (B*T, final_channels, grid_size, grid_size)
         
-        x = x.flatten(2).transpose(1, 2)  # (B*T, grid_size*grid_size, 128)
+        x = x.flatten(2).transpose(1, 2)  # (B*T, grid_size*grid_size, final_channels)
         x = self.proj(x)                  # (B*T, grid_size*grid_size, embed_dim)
 
         return x.view(B, T, self.grid_size * self.grid_size, -1)

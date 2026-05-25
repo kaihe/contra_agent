@@ -41,11 +41,11 @@ def _collect_graphs(sources: list[str]) -> list[str]:
 
 
 def _process_worker(args) -> tuple:
-    graph_path, out_dir, bc_raw_dir, skip_dpo = args
+    graph_path, out_dir, bc_raw_dir, skip_dpo, use_vision = args
     try:
         from annotate.instance_dpo import DPOGraphSample
         out_path = DPOGraphSample(graph_path).process(
-            out_dir, bc_out_dir=bc_raw_dir, skip_dpo=skip_dpo
+            out_dir, bc_out_dir=bc_raw_dir, skip_dpo=skip_dpo, use_vision=use_vision
         )
         if skip_dpo:
             return graph_path, 0, 1 if out_path else 0, None
@@ -118,6 +118,8 @@ def main():
     parser.add_argument("--bc-shard-size", type=int, default=256, help="Recordings per BC shard (default: 256)")
     parser.add_argument("--skip-dpo", action="store_true",
                         help="Skip DPO pair generation; export BC traces only")
+    parser.add_argument("--use-vision", action="store_true",
+                        help="Extract image frames (168x168 grayscale) instead of RAM")
     parser.add_argument("--workers", type=int, default=16, help="Parallel workers (default: 16)")
     args = parser.parse_args()
 
@@ -143,7 +145,7 @@ def main():
     out_label = args.out_dir or args.bc_out_dir
     print(f"Processing {len(graph_paths)} graphs → {out_label}")
 
-    tasks       = [(p, args.out_dir, bc_raw_dir, args.skip_dpo) for p in graph_paths]
+    tasks       = [(p, args.out_dir, bc_raw_dir, args.skip_dpo, args.use_vision) for p in graph_paths]
     total_pairs = 0
     total_bc    = 0
 

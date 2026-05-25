@@ -1,29 +1,24 @@
 shared:
   output_path: ${USER}/policy_model/nes_img_only_168
-  n_seq_timesteps: 128
-  tokenizer:
-    type: "conv"
-    conv_tokenizer_config:
-      num_tokens: 1
+  n_seq_timesteps: 64
 
 # Policy Model Configuration
-# dim=1024  layers=10  heads=16  => ~150M parameters
+# dim=384  layers=6  heads=6  => ~10M parameters
 policy_model:
-  n_transformer_layers: 10
-  n_q_head: 16
-  n_kv_head: 16
-  transformer_dim: &transformer_dim 1024
+  n_transformer_layers: 6
+  n_q_head: 6
+  n_kv_head: 6
+  transformer_dim: &transformer_dim 384
   mask_block_size: 128
-  attention_history_len: [128, 128, 128, 128, 128, 128, 128, 128, 128, 128]
   n_kv_sink_tokens: 0
   model_type: "dense"
-  dropout: 0.2
+  dropout: 0
   use_vision: true
   in_channels: 1
   frame_size: 168
+  grid_size: 4
   focal_gamma: 0.0
-  class_weights: [0.029, 0.232, 0.102, 2.442, 0.126, 0.772, 0.521, 2.442, 0.016, 0.107, 0.042, 2.442, 0.075, 0.863, 0.105, 2.442, 0.048, 0.546, 0.082, 2.442, 0.425, 0.653, 0.705, 2.442, 0.019, 0.193, 0.040, 2.442, 1.727, 1.410, 2.442, 2.442, 0.368, 1.727, 0.653, 2.442]
-  ablate: ["action"]        # img-only: zero out action history tokens
+  ablate: []        # 'img', 'action'
 
 
 stage3_finetune:
@@ -33,13 +28,13 @@ stage3_finetune:
     beta_1: 0.9
     beta_2: 0.999
 
-  n_epochs: 5
+  n_epochs: 50
   n_val_recordings: 300
-  accumulate_grad_batches: 32
+  accumulate_grad_batches: 256
   checkpoint_dir: tmp/checkpoints/nes_policy
 
   training_dataset:
-    batch_size: &stage3_batch_size 4
+    batch_size: &stage3_batch_size 16
     data_folder: annotate/bc_data/level1_grey_168
     num_workers: 8
 
@@ -53,3 +48,22 @@ wandb:
   enabled: false
   project: "policy_model"
   exp_name: "contra-nes-img-only-168"
+
+dpo:
+  beta: 0.05
+  lr: 5.0e-6
+  weight_decay: 1.0e-4
+  batch_size: 2
+  accumulate_grad_batches: 64
+  max_epochs: 3
+  val_fraction: 0.1
+  label_smoothing: 0.1
+  average_logprob: false
+  seed: 42
+  limit_train_batches: null
+  limit_val_batches: null
+  data_folder: annotate/bc_data/level1_img_dpo
+  kind_filter: null  # 0=dead only, 1=secondary only, null=all
+  min_reward_margin: 50.0
+  ref_checkpoint: tmp/checkpoints/nes_policy/10m_better_img/best.ckpt
+  checkpoint_dir: tmp/checkpoints/nes_policy_dpo
