@@ -1,19 +1,19 @@
 # ContraVLA training hyperparameters (full model fine-tuning)
 
 # Data paths
-data_dir: vla/data/level1_action_600
-name: unfrozen_600
+data_dir: vla/data/level1_400
+name: base_400
 # Training
 epochs: 4
 batch_size: 128
-lr: 2.0e-4
+lr: 1.0e-4
 weight_decay: 1.0e-2
 warmup_steps: 500
 grad_clip: 1.0
 workers: 8
 
 # Model
-freeze_vlm: false
+freeze_vlm: true
 no_freeze_vlm: true
 dropout: 0.1
 grad_checkpoint: true

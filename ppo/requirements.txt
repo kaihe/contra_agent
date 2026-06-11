@@ -1,6 +1,0 @@
-stable-baselines3[extra]
-stable-retro
-gymnasium
-opencv-python
-imageio
-imageio-ffmpeg

@@ -128,6 +128,23 @@ ENEMY_TYPE_NAMES_BY_LEVEL = {
     },
 }
 
+# HP-bearing bosses, minibosses, and finite boss-objective components. Names
+# and roles are sourced from reference/nes-contra-us/docs/Enemy Glossary.md.
+BOSS_ENEMY_TYPES_COMMON = {
+    0x0A,  # Wall Plating: indoor boss-screen shielded cores
+}
+
+BOSS_ENEMY_TYPES_BY_LEVEL = {
+    0: {0x10, 0x11},              # Bomb Turret, Plated Door
+    1: {0x10, 0x14},              # Boss Eye, Core
+    2: {0x14, 0x15},              # Dragon, Dragon Tentacle Orb
+    3: {0x10, 0x14, 0x1C},        # Boss Eye, Core, Godomuga
+    4: {0x12, 0x14},              # Tank, Alien Carrier
+    5: {0x13},                    # Giant Boss Soldier (Gordea)
+    6: {0x16, 0x17},              # Armored Door, Mortar Launcher
+    7: {0x10, 0x15, 0x16},        # Java, Eggron, Gomeramos King
+}
+
 
 def enemy_type_name(etype: int, level_0indexed: int) -> str:
     """Return a readable name for an enemy type given the current level (0-indexed)."""
@@ -157,8 +174,15 @@ def _weapon_type(ram: np.ndarray) -> int:
 
 # ── Individual event instances ────────────────────────────────────────────────
 
-def _enemy_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
-    """Sum HP decrements across all 16 slots, with level-aware handling of type 0x13.
+def _is_boss_enemy_type(level: int, etype: int) -> bool:
+    return (
+        etype in BOSS_ENEMY_TYPES_COMMON
+        or etype in BOSS_ENEMY_TYPES_BY_LEVEL.get(level, set())
+    )
+
+
+def _enemy_hp_decrements(pre: np.ndarray, cur: np.ndarray):
+    """Yield (level, enemy type, HP decrement) for rewardable enemy slots.
 
     Type 0x13 meaning by level (0-indexed):
       L1 (0): no type-0x13 defined — skip
@@ -171,7 +195,6 @@ def _enemy_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
       L8 (7): Poisonous Insect Gel — include
     """
     level = int(pre[ADDR_LEVEL])
-    total = 0.0
     for slot in range(ADDR_ENEMY_HP_COUNT):
         etype  = int(pre[ADDR_ENEMY_TYPE + slot])
         pre_hp = int(pre[ADDR_ENEMY_HP   + slot])
@@ -180,47 +203,42 @@ def _enemy_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
             continue
         if etype == 0x01:             # Bullet — projectile object, no real HP
             continue
-        if etype == ENEMY_TYPE_FALLING_ROCK:
-            if level == 0:    # L1 — no type-0x13 enemies defined
-                continue
-            elif level == 1:  # L2 — Wall Turret: include
-                pass
-            elif level == 2:  # L3 — Falling Rock: exclude (endless respawn)
-                continue
-            elif level == 3:  # L4 — Wall Turret: include
-                pass
-            elif level == 4:  # L5 — Ice Separator: include
-                pass
-            elif level == 5:  # L6 — Giant Boss Soldier (Gordea): include
-                pass
-            elif level == 6:  # L7 — Mining Cart Generator: include
-                pass
-            elif level == 7:  # L8 — Poisonous Insect Gel: include
-                pass
-            else:
-                continue
-        delta = pre_hp - cur_hp
-        if delta > 0:
-            total += float(delta)
-    return total
-
-
-def _enemy_hit_detail(pre: np.ndarray, cur: np.ndarray) -> str:
-    level = int(pre[ADDR_LEVEL])
-    parts = []
-    for slot in range(ADDR_ENEMY_HP_COUNT):
-        etype  = int(pre[ADDR_ENEMY_TYPE + slot])
-        pre_hp = int(pre[ADDR_ENEMY_HP   + slot])
-        cur_hp = int(cur[ADDR_ENEMY_HP   + slot])
-        if pre_hp >= 0xf0 or cur_hp >= 0xf0:
-            continue
-        if etype == 0x01:
-            continue
-        if etype == ENEMY_TYPE_FALLING_ROCK and level == 2:
+        if etype == ENEMY_TYPE_FALLING_ROCK and level not in {1, 3, 4, 5, 6, 7}:
             continue
         delta = pre_hp - cur_hp
         if delta > 0:
-            parts.append(f"{enemy_type_name(etype, level)} -{delta}HP")
+            yield level, etype, float(delta)
+
+
+def _enemy_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
+    """Sum HP decrements across all rewardable enemy slots."""
+    return sum(delta for _, _, delta in _enemy_hp_decrements(pre, cur))
+
+
+def _regular_enemy_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
+    """Sum HP decrements for non-boss enemies."""
+    return sum(
+        delta
+        for level, etype, delta in _enemy_hp_decrements(pre, cur)
+        if not _is_boss_enemy_type(level, etype)
+    )
+
+
+def _boss_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
+    """Sum HP decrements for bosses and finite boss-objective components."""
+    return sum(
+        delta
+        for level, etype, delta in _enemy_hp_decrements(pre, cur)
+        if _is_boss_enemy_type(level, etype)
+    )
+
+
+def _enemy_hit_detail(pre: np.ndarray, cur: np.ndarray, boss: bool | None = None) -> str:
+    parts = [
+        f"{enemy_type_name(etype, level)} -{delta}HP"
+        for level, etype, delta in _enemy_hp_decrements(pre, cur)
+        if boss is None or _is_boss_enemy_type(level, etype) == boss
+    ]
     return ", ".join(parts)
 
 
@@ -231,6 +249,22 @@ EV_ENEMY_HIT = ContraEvent(
          "it is a real enemy (Wall Turret, Giant Boss Soldier, etc.).",
     trigger_fn=_enemy_hit_trigger,
     detail_fn=_enemy_hit_detail,
+    weight=1.0,
+)
+
+EV_REGULAR_ENEMY_HIT = ContraEvent(
+    tag="REGULAR_ENEMY_HIT",
+    desc="HP decrements for regular enemies only.",
+    trigger_fn=_regular_enemy_hit_trigger,
+    detail_fn=lambda pre, cur: _enemy_hit_detail(pre, cur, boss=False),
+    weight=1.0,
+)
+
+EV_BOSS_HIT = ContraEvent(
+    tag="BOSS_HIT",
+    desc="HP decrements for bosses, minibosses, and finite boss-objective components.",
+    trigger_fn=_boss_hit_trigger,
+    detail_fn=lambda pre, cur: _enemy_hit_detail(pre, cur, boss=True),
     weight=1.0,
 )
 
@@ -446,7 +480,8 @@ LEVELS_BASE = [
     EV_TITLE_SCREEN,
     EV_LEVEL_BEGIN,
     EV_LEVEL_TRANSITION,
-    EV_ENEMY_HIT,
+    EV_REGULAR_ENEMY_HIT,
+    EV_BOSS_HIT,
     EV_SPREAD_LOST,
     EV_PLAYER_DIE,
     EV_GUN_PICKUP,
@@ -470,7 +505,7 @@ EVENTS_BY_LEVEL = {
     2: LEVELS_PUSH_UP,       # L3  waterfall
     3: LEVELS_PUSH_INSIDE,  # L4  indoor
     4: LEVELS_PUSH_RIGHT,   # L5  snow
-    5: LEVELS_PUSH_RIGHT,                      # L6  factory (Giant Boss Soldier type $13 now in EV_ENEMY_HIT)
+    5: LEVELS_PUSH_RIGHT,   # L6  factory
     6: LEVELS_PUSH_RIGHT,   # L7  side-scroll
     7: [*LEVELS_PUSH_RIGHT, EV_GAME_CLEAR],   # L8  final boss
 }

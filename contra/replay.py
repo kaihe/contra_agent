@@ -36,10 +36,17 @@ import numpy as np
 
 warnings.filterwarnings("ignore", message=".*Gym.*")
 
-from contra.events import scan_events, EV_LEVELUP, EV_GAME_CLEAR, get_level
+from contra.events import (
+    scan_events,
+    EV_BOSS_HIT,
+    EV_GAME_CLEAR,
+    EV_LEVELUP,
+    EV_REGULAR_ENEMY_HIT,
+)
 import stable_retro as retro
 
 _levelup_ev = EV_LEVELUP
+_hit_events = (EV_REGULAR_ENEMY_HIT, EV_BOSS_HIT)
 
 GAME = "Contra-Nes"
 SKIP = 3
@@ -79,6 +86,17 @@ def save_video(frames: np.ndarray, path: str) -> None:
         proc.stdin.write(frame.tobytes())
     proc.stdin.close()
     proc.wait()
+
+
+def scan_hit_events(prev_ram: np.ndarray, curr_ram: np.ndarray,
+                    step: int) -> list[dict]:
+    """Return regular-enemy and boss-hit diagnostics for one replay step."""
+    events = []
+    for ev in _hit_events:
+        if ev.trigger(prev_ram, curr_ram):
+            detail = ev._detail_fn(prev_ram, curr_ram) if ev._detail_fn else ""
+            events.append({"step": step, "tag": ev.tag, "detail": detail})
+    return events
 
 
 def replay_actions(source, *,
@@ -140,6 +158,7 @@ def replay_actions(source, *,
                 frames.append(obs.copy())  # first NES frame: model sees state right after action
         curr_ram = env.unwrapped.get_ram()
         all_events.extend(scan_events(pre_ram, curr_ram, step))
+        all_events.extend(scan_hit_events(pre_ram, curr_ram, step))
         if _levelup_ev.trigger(pre_ram, curr_ram):
             leveled_up = True
         if EV_GAME_CLEAR.trigger(pre_ram, curr_ram):

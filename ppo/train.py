@@ -1,373 +1,360 @@
 """
-Contra (NES) PPO Training with Stable-Baselines3
-=================================================
+Contra (NES) PPO training with Stable-Baselines3.
 
 Usage:
-    python train.py                           # Default training
-    python train.py --timesteps 10000000      # Custom timesteps
-    python train.py --resume trained_models/ppo_contra_1000000_steps.zip
+    python ppo/train.py
+    python ppo/train.py --config ppo/ppo.yaml --timesteps 10000000
+    python ppo/train.py --resume tmp/ppo/checkpoints/ppo_contra/ppo_contra_final.zip
 """
 
+import argparse
+import dataclasses
 import glob
 import os
-
 import warnings
+from dataclasses import dataclass, field
+
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 
 import contra  # registers custom ROM integration
-import gymnasium as gym
 import numpy as np
-import torch as th
 import stable_retro as retro
+import yaml
 from stable_baselines3 import PPO
-from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
-from stable_baselines3.common.utils import obs_as_tensor
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
+from contra_wrapper import (
+    DEFAULT_REWARD_WEIGHTS,
+    RandomStateWrapper,
+    create_env,
+    save_config_to_model,
+)
+
+
+DEFAULT_CONFIG = os.path.join(os.path.dirname(__file__), "ppo.yaml")
+
+
+@dataclass(frozen=True)
+class PPOConfig:
+    game: str = "Contra-Nes"
+    state: str = "Level1"
+    # Optional .state file paths sampled uniformly per episode (multi-state
+    # training). When empty, every episode starts from `state`.
+    states: list[str] = field(default_factory=list)
+    name: str = "ppo_contra"
+    timesteps: int = 32_000_000
+    resume: str | None = None
+    seed: int = 0
+    device: str = "cuda"
+
+    num_envs: int = 16
+    random_start_frames: int = 0
+    warmup_frames: int = 120
+    max_episode_steps: int = 10000
+    enemy_hp_cap_per_region: float = 5.0
+    skip: int = 3
+    stack: int = 4
+
+    n_steps: int = 2048
+    batch_size: int = 2048
+    n_epochs: int = 10
+    gamma: float = 0.99
+    learning_rate: float = 1e-4
+    clip_range_initial: float = 0.2
+    clip_range_final: float = 0.05
+    ent_coef_initial: float = 0.1
+    ent_coef_final: float = 0.005
+
+    log_dir: str = "tmp/ppo/logs"
+    save_dir: str = "tmp/ppo/checkpoints"
+    save_freq: int = 125000
+    reward_weights: dict[str, float] = field(
+        default_factory=lambda: DEFAULT_REWARD_WEIGHTS.copy()
+    )
+
+
+def _load_yaml(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected YAML mapping in {path}, got {type(data).__name__}")
+    return data
+
+
+def _config_from_mapping(data: dict) -> PPOConfig:
+    valid = {field.name for field in dataclasses.fields(PPOConfig)}
+    unknown = sorted(set(data) - valid)
+    if unknown:
+        raise ValueError(f"Unknown PPO config field(s): {unknown}")
+
+    merged = dict(data)
+    if "reward_weights" in merged:
+        weights = DEFAULT_REWARD_WEIGHTS.copy()
+        unknown_weights = sorted(set(merged["reward_weights"]) - set(weights))
+        if unknown_weights:
+            raise ValueError(f"Unknown reward weight(s): {unknown_weights}")
+        weights.update(merged["reward_weights"])
+        merged["reward_weights"] = weights
+    return PPOConfig(**merged)
+
+
+def parse_args() -> PPOConfig:
+    parser = argparse.ArgumentParser(description="Contra PPO Training")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG,
+                        help="Path to PPO YAML config")
+    parser.add_argument("--timesteps", type=int, default=None,
+                        help="Training timesteps to run this invocation")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint to resume from")
+    parser.add_argument("--state", type=str, default=None,
+                        help="Single game state to train on")
+    parser.add_argument("--random-start", type=int, default=None,
+                        help="Max random no-op frames at episode start")
+    parser.add_argument("--name", type=str, default=None,
+                        help="Experiment name")
+    args = parser.parse_args()
+
+    config_data = _load_yaml(args.config)
+    overrides = {
+        "timesteps": args.timesteps,
+        "resume": args.resume,
+        "state": args.state,
+        "random_start_frames": args.random_start,
+        "name": args.name,
+    }
+    config_data.update({k: v for k, v in overrides.items() if v is not None})
+    return _config_from_mapping(config_data)
 
 
 class LatestCheckpointCallback(CheckpointCallback):
-    """Saves a checkpoint every save_freq steps, keeps only the latest one,
-    and embeds contra_config.json into each saved file."""
+    """Save one rolling checkpoint and embed the PPO/wrapper config."""
+
+    def __init__(self, *args, train_config: dict, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.train_config = train_config
+
+    def _step_number(self, path: str) -> int:
+        # Filenames are "{name_prefix}_{steps}_steps.zip"; sort by the integer
+        # step, not lexicographically (else "8000000" > "28000000").
+        name = os.path.basename(path)
+        try:
+            return int(name[len(self.name_prefix) + 1: -len("_steps.zip")])
+        except ValueError:
+            return -1
 
     def _on_step(self) -> bool:
         result = super()._on_step()
         if self.n_calls % self.save_freq == 0:
             pattern = os.path.join(self.save_path, f"{self.name_prefix}_*_steps.zip")
-            checkpoints = sorted(glob.glob(pattern))
+            checkpoints = sorted(glob.glob(pattern), key=self._step_number)
             if checkpoints:
-                save_config_to_model(checkpoints[-1])
+                save_config_to_model(
+                    checkpoints[-1],
+                    skip=self.train_config["skip"],
+                    stack=self.train_config["stack"],
+                    train_config=self.train_config,
+                )
             for old in checkpoints[:-1]:
                 os.remove(old)
                 print(f"  Removed old checkpoint: {os.path.basename(old)}")
         return result
-from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from contra_wrapper import create_env, save_config_to_model
-
-# =============================================================================
-# CONFIG
-# =============================================================================
-
-NUM_ENV    = 16
-BATCH_SIZE = 2048
-LOG_DIR = "logs"
-SAVE_DIR = "trained_models"
-GAME = "Contra-Nes"
-STATE = "Level1"
-
-os.makedirs(LOG_DIR, exist_ok=True)
-os.makedirs(SAVE_DIR, exist_ok=True)
-
-
-# =============================================================================
-# CUSTOM CALLBACK FOR TENSORBOARD LOGGING
-# =============================================================================
 
 class EntropyScheduleCallback(BaseCallback):
-    """Custom callback for scheduling entropy coefficient during training."""
+    """Schedule entropy coefficient during training."""
 
     def __init__(self, entropy_schedule, verbose=0):
         super().__init__(verbose)
         self.entropy_schedule = entropy_schedule
 
     def _on_step(self) -> bool:
-        # Update entropy coefficient based on training progress
-        # progress_remaining goes from 1.0 (start) to 0.0 (end)
         progress_remaining = 1.0 - (self.num_timesteps / self.model._total_timesteps)
         self.model.ent_coef = self.entropy_schedule(progress_remaining)
-        # Log current entropy coefficient
         self.logger.record("train/ent_coef", self.model.ent_coef)
         return True
 
 
 class TensorboardCallback(BaseCallback):
-    """Custom callback for logging episode stats to TensorBoard."""
+    """Log Contra episode stats to TensorBoard."""
 
     def __init__(self, verbose=0):
         super().__init__(verbose)
-        self.episode_max_x = []
+        self.episode_delta_x = []
+        self.episode_enemy_hp_cost = []
         self.episode_rewards = []
-        self.end_reasons = {"time_out": 0, "game_over": 0, "win": 0}
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
-            if "episode_max_x" in info:
-                self.episode_max_x.append(info["episode_max_x"])
+            if "episode_delta_x" in info:
+                self.episode_delta_x.append(info["episode_delta_x"])
+                self.episode_enemy_hp_cost.append(
+                    info.get("episode_enemy_hp_cost", 0.0)
+                )
                 self.episode_rewards.append(info.get("episode_reward", 0))
-                
-                reason = info.get("episode_end_reason", "")
-                if reason in self.end_reasons:
-                    self.end_reasons[reason] += 1
 
-        if len(self.episode_max_x) >= 100:
-            self.logger.record("contra/mean_max_x", np.mean(self.episode_max_x))
-            self.logger.record("contra/mean_reward", np.mean(self.episode_rewards))
-            
-            total = sum(self.end_reasons.values()) or 1
-            self.logger.record("contra/end_time_out", self.end_reasons["time_out"] / total)
-            self.logger.record("contra/end_game_over", self.end_reasons["game_over"] / total)
-            self.logger.record("contra/end_win", self.end_reasons["win"] / total)
-            
-            self.episode_max_x = []
+        if len(self.episode_delta_x) >= 100:
+            self.logger.record("contra/mean_delta_x", float(np.mean(self.episode_delta_x)))
+            self.logger.record(
+                "contra/mean_enemy_hp_cost",
+                float(np.mean(self.episode_enemy_hp_cost)),
+            )
+            self.logger.record("contra/mean_reward", float(np.mean(self.episode_rewards)))
+
+            self.episode_delta_x = []
+            self.episode_enemy_hp_cost = []
             self.episode_rewards = []
-            self.end_reasons = {"time_out": 0, "game_over": 0, "win": 0}
 
         return True
 
-# =============================================================================
-# RND CURIOSITY REWARD
-# =============================================================================
-
-class _RNDEnvAdapter:
-    """Minimal adapter so rllte.RND can infer obs/action shape from SB3 VecEnv.
-
-    rllte expects channels-first obs, but ContraWrapper exposes (84, 84, 4).
-    We report (4, 84, 84) here so the CNN encoder is built correctly.
-    """
-    def __init__(self, vec_env, stack: int = 4):
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(stack, 84, 84), dtype=np.uint8
-        )
-        self.action_space = vec_env.action_space
-        self.num_envs = vec_env.num_envs
-        self.unwrapped = self
-
-
-class RNDCallback(BaseCallback):
-    """Augments rollout rewards with RND intrinsic curiosity before each policy update.
-
-    Flow (per rollout):
-      1. Transpose buffer observations to channels-first (n_steps, n_envs, 4, 84, 84)
-      2. Call rnd.compute() → normalised intrinsic rewards (n_steps, n_envs)
-      3. Add beta * intrinsic to rollout_buffer.rewards
-      4. Recompute GAE returns/advantages with the modified rewards
-    """
-
-    def __init__(self, rnd, beta: float = 0.5, verbose: int = 0):
-        super().__init__(verbose)
-        self.rnd = rnd
-        self.beta = beta
-        self._last_dones = None
-
-    def _on_step(self) -> bool:
-        # Capture dones from the most recent env step for GAE recomputation.
-        self._last_dones = self.locals.get("dones")
-        return True
-
-    def _on_rollout_end(self) -> None:
-        buf = self.model.rollout_buffer
-        n_steps, n_envs = buf.rewards.shape
-
-        # (n_steps, n_envs, 84, 84, 4) → (n_steps, n_envs, 4, 84, 84), float32 [0,1]
-        obs_chw = np.transpose(buf.observations, (0, 1, 4, 2, 3)).astype(np.float32) / 255.0
-        obs_t = th.as_tensor(obs_chw, device=self.rnd.device)
-
-        samples = {
-            "observations": obs_t,
-            "next_observations": obs_t,          # RND only uses next_obs
-            "actions": th.as_tensor(buf.actions),
-            "rewards": th.as_tensor(buf.rewards),
-            "terminateds": th.zeros(n_steps, n_envs, device=self.rnd.device),
-            "truncateds": th.zeros(n_steps, n_envs, device=self.rnd.device),
-        }
-
-        intrinsic = self.rnd.compute(samples, sync=True).cpu().numpy()
-        buf.rewards += self.beta * intrinsic
-
-        # Recompute GAE returns/advantages with modified rewards
-        with th.no_grad():
-            last_obs_t = obs_as_tensor(self.model._last_obs, self.model.device)
-            last_values = self.model.policy.predict_values(last_obs_t)
-        dones = self._last_dones if self._last_dones is not None \
-            else np.zeros(n_envs, dtype=bool)
-        buf.compute_returns_and_advantage(last_values=last_values, dones=dones)
-
-        if self.verbose:
-            self.logger.record("rnd/mean_intrinsic", float(intrinsic.mean()))
-
-
-# =============================================================================
-# LEARNING RATE & CLIP RANGE SCHEDULES
-# =============================================================================
 
 def linear_schedule(initial_value, final_value=0.0):
-    """Linear interpolation between initial_value and final_value.
-
-    Args:
-        initial_value: Starting value (at progress=1.0, beginning of training)
-        final_value: Ending value (at progress=0.0, end of training)
-
-    Note: progress goes from 1.0 -> 0.0 during training
-    """
-    if isinstance(initial_value, str):
-        initial_value = float(initial_value)
-        final_value = float(final_value)
-        assert initial_value > 0.0
+    """Linear interpolation. SB3 progress goes from 1.0 to 0.0."""
+    initial_value = float(initial_value)
+    final_value = float(final_value)
 
     def scheduler(progress):
-        # progress: 1.0 at start -> 0.0 at end
         return final_value + progress * (initial_value - final_value)
 
     return scheduler
 
 
-# =============================================================================
-# ENVIRONMENT FACTORY
-# =============================================================================
-
-def infer_level(states: list) -> int:
-    """Infer level number from state names (e.g. 'Level2' or 'Level2_x100.state' -> 2)."""
+def infer_level(state: str) -> int:
+    """Infer level number from a state name such as Level2 or Level2_x100.state."""
     import re
-    for s in states:
-        m = re.search(r"Level(\d+)", os.path.basename(s), re.IGNORECASE)
-        if m:
-            return int(m.group(1))
-    return 1  # default
+    match = re.search(r"Level(\d+)", os.path.basename(state), re.IGNORECASE)
+    return int(match.group(1)) if match else 1
 
 
-def make_env(game, states, seed=0, random_start_frames=0):
-    level = infer_level(states)
+def make_env(config: PPOConfig, rank: int):
+    level = infer_level(config.state)
 
     def _init():
-        # Use first non-file state for retro.make, or fallback to default
-        init_state = None
-        for s in states:
-            if not (s.endswith(".state") and os.path.isfile(s)):
-                init_state = s
-                break
-        if init_state is None:
-            init_state = f"Level{level}"
-
         env = retro.make(
-            game=game,
-            state=init_state,
+            game=config.game,
+            state=config.state,
             use_restricted_actions=retro.Actions.FILTERED,
             obs_type=retro.Observations.IMAGE,
             render_mode=None,
             inttype=retro.data.Integrations.CUSTOM_ONLY,
         )
-        env = create_env(env, random_start_frames=random_start_frames, level=level)
+        if config.states:
+            env = RandomStateWrapper(env, states=config.states)
+        env = create_env(
+            env,
+            random_start_frames=config.random_start_frames,
+            warmup_frames=config.warmup_frames,
+            skip=config.skip,
+            stack=config.stack,
+            level=level,
+            max_episode_steps=config.max_episode_steps,
+            enemy_hp_cap_per_region=config.enemy_hp_cap_per_region,
+            reward_weights=config.reward_weights,
+        )
+        np.random.seed(config.seed + rank)
+        env.action_space.seed(config.seed + rank)
         env = Monitor(env)
         return env
 
     return _init
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
-
 def main():
-    import argparse
+    config = parse_args()
+    train_config = dataclasses.asdict(config)
+    checkpoint_dir = os.path.join(config.save_dir, config.name)
 
-    parser = argparse.ArgumentParser(description="Contra PPO Training")
-    parser.add_argument("--timesteps", type=int, default=32_000_000,
-                        help="Total training timesteps")
-    parser.add_argument("--resume", type=str, default=None,
-                        help="Path to checkpoint to resume from")
-    parser.add_argument("--state", type=str, nargs="+", default=[STATE],
-                        help="Game state(s) to train on (randomly selected per episode)")
-    parser.add_argument("--random-start", type=int, default=0,
-                        help="Max random no-op frames at episode start (0=disabled)")
-    parser.add_argument("--name", type=str, default="ppo_contra",
-                        help="Experiment name (used for tensorboard and checkpoints)")
-    parser.add_argument("--rnd", action="store_true",
-                        help="Enable RND curiosity reward (rllte-core)")
-    parser.add_argument("--rnd-beta", type=float, default=0.5,
-                        help="Intrinsic reward injection scale (0=off, 1=full weight)")
-    args = parser.parse_args()
+    os.makedirs(config.log_dir, exist_ok=True)
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
     print("=" * 70)
     print("Contra (NES) - PPO Training")
     print("=" * 70)
-    print(f"  Experiment:   {args.name}")
-    print(f"  Game:         {GAME}")
-    print(f"  State(s):     {', '.join(args.state)}")
-    print(f"  Envs:         {NUM_ENV}")
-    print(f"  Timesteps:    {args.timesteps:,}")
-    print(f"  Random start: {args.random_start} frames")
-    print(f"  Log dir:      {LOG_DIR}")
-    print(f"  Save dir:     {SAVE_DIR}")
-    if args.resume:
-        print(f"  Resume:       {args.resume}")
-    if args.rnd:
-        print(f"  RND:          enabled (beta={args.rnd_beta})")
+    print(f"  Experiment:   {config.name}")
+    print(f"  Game:         {config.game}")
+    print(f"  State:        {config.state}")
+    if config.states:
+        print(f"  States:       {len(config.states)} anchors sampled per episode")
+    print(f"  Envs:         {config.num_envs}")
+    print(f"  Steps to run: {config.timesteps:,}")
+    print(f"  Random start: {config.random_start_frames} frames")
+    print(f"  Log dir:      {config.log_dir}")
+    print(f"  Save dir:     {checkpoint_dir}")
+    if config.resume:
+        print(f"  Resume:       {config.resume}")
     print("=" * 70)
 
-    # Create vectorized environment
-    env = SubprocVecEnv(
-        [make_env(GAME, states=args.state, seed=i, random_start_frames=args.random_start)
-         for i in range(NUM_ENV)]
+    env = SubprocVecEnv([make_env(config, i) for i in range(config.num_envs)])
+
+    clip_range_schedule = linear_schedule(
+        config.clip_range_initial,
+        config.clip_range_final,
+    )
+    entropy_schedule = linear_schedule(
+        config.ent_coef_initial,
+        config.ent_coef_final,
     )
 
-    # Learning rate, clip range, and entropy schedules
-    clip_range_schedule = linear_schedule(0.2, 0.05)
-    # Start with high exploration (0.1), decay to lower exploration (0.005)
-    entropy_schedule = linear_schedule(0.1, 0.005)
-
-    if args.resume:
-        # Load existing model
-        print(f"Loading model from {args.resume}")
+    if config.resume:
+        print(f"Loading model from {config.resume}")
         custom_objects = {
-            "learning_rate": 1e-4,
+            "learning_rate": config.learning_rate,
             "clip_range": clip_range_schedule,
-            "n_steps": BATCH_SIZE,
+            "n_steps": config.n_steps,
         }
-        model = PPO.load(args.resume, env=env, device="cuda", custom_objects=custom_objects)
+        model = PPO.load(
+            config.resume,
+            env=env,
+            device=config.device,
+            custom_objects=custom_objects,
+        )
         print(f"  Resumed at timestep {model.num_timesteps:,}")
     else:
-        # Create new model
         model = PPO(
             "CnnPolicy",
             env,
-            device="cuda",
+            device=config.device,
             verbose=0,
-            n_steps=BATCH_SIZE,
-            batch_size=BATCH_SIZE,
-            n_epochs=10,
-            gamma=0.99,
-            ent_coef=0.1,  # Initial value (will be scheduled by callback)
-            learning_rate=1e-4,
+            n_steps=config.n_steps,
+            batch_size=config.batch_size,
+            n_epochs=config.n_epochs,
+            gamma=config.gamma,
+            ent_coef=config.ent_coef_initial,
+            learning_rate=config.learning_rate,
             clip_range=clip_range_schedule,
-            tensorboard_log=LOG_DIR,
+            tensorboard_log=config.log_dir,
         )
 
-    # RND curiosity module (optional)
-    callbacks = []
-    if args.rnd:
-        from rllte.xplore.reward import RND
-        rnd = RND(
-            envs=_RNDEnvAdapter(env),
-            device="cuda",
-            beta=1.0,          # internal normalization scale; injection scale is rnd_beta
-            kappa=0.0,
-            obs_norm_type=None, # skip costly normalization warmup
-        )
-        callbacks.append(RNDCallback(rnd, beta=args.rnd_beta, verbose=1))
-
-    # Callbacks
-    checkpoint_interval = 125000  # 125000 * 32 envs = 4M steps
     checkpoint_callback = LatestCheckpointCallback(
-        save_freq=checkpoint_interval,
-        save_path=SAVE_DIR,
-        name_prefix=args.name,
+        save_freq=config.save_freq,
+        save_path=checkpoint_dir,
+        name_prefix=config.name,
+        train_config=train_config,
     )
-    entropy_callback = EntropyScheduleCallback(entropy_schedule)
-    tensorboard_callback = TensorboardCallback()
-    callbacks += [checkpoint_callback, entropy_callback, tensorboard_callback]
+    callbacks = [
+        checkpoint_callback,
+        EntropyScheduleCallback(entropy_schedule),
+        TensorboardCallback(),
+    ]
 
-    # Training
-    # When resuming, use cumulative total_timesteps so schedules continue from
-    # where they left off rather than restarting (reset_num_timesteps=False).
-    start_timesteps = model.num_timesteps if args.resume else 0
-    total_timesteps = start_timesteps + args.timesteps
     model.learn(
-        total_timesteps=total_timesteps,
+        total_timesteps=config.timesteps,
         callback=callbacks,
-        tb_log_name=args.name,
+        tb_log_name=config.name,
         progress_bar=True,
-        reset_num_timesteps=not bool(args.resume),
+        reset_num_timesteps=not bool(config.resume),
     )
+
+    final_path = os.path.join(checkpoint_dir, f"final.zip")
+    model.save(final_path)
+    save_config_to_model(
+        final_path,
+        skip=config.skip,
+        stack=config.stack,
+        train_config=train_config,
+    )
+    print(f"Saved final model: {final_path}")
 
     env.close()
 

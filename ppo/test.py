@@ -1,186 +1,213 @@
 """
-Contra (NES) Model Testing
-===========================
+Contra (NES) checkpoint evaluation
+==================================
+
+Evaluate a trained model across the Level 1 anchor states, reporting per-state
+delta x, enemy HP cost, episode reward, and game result.
 
 Usage:
-    python test.py                                    # Test default model
-    python test.py --model trained_models/ppo_contra_1000000_steps.zip
-    python test.py --render                           # Also show live gameplay
+    # Newest level1_win checkpoint, anchors embedded in the model, 10 eps each
+    python ppo/test.py
+
+    python ppo/test.py --model tmp/ppo/checkpoints/level1_win/level1_win_8000000_steps.zip
+    python ppo/test.py --episodes 20 --deterministic
+    python ppo/test.py --states ppo/states/Level1_x0_step1.state --gif
 """
 
-import gzip
+import argparse
+import glob
 import os
-
 import warnings
+
 warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 
-import contra  # registers custom ROM integration
+import contra  # noqa: F401  registers custom ROM integration
 import numpy as np
 import stable_retro as retro
 from stable_baselines3 import PPO
 
-from contra_wrapper import create_env, Monitor, load_config_from_model, apply_config
-
-
-# =============================================================================
-# CONFIG
-# =============================================================================
+from contra_wrapper import (
+    Monitor,
+    RandomStateWrapper,
+    apply_config,
+    create_env,
+    load_config_from_model,
+)
 
 GAME = "Contra-Nes"
-STATE = "Level1"
-MODEL_DIR = "trained_models"
-DEFAULT_MODEL = "ppo_contra_final.zip"
-OUTPUT_DIR = "recordings"
+DEFAULT_CKPT_GLOB = "tmp/ppo/checkpoints/level1_win/level1_win_*_steps.zip"
+DEFAULT_STATES_GLOB = "ppo/states/*.state"
+GIF_DIR = "tmp/ppo/eval"
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
+def _ckpt_step(path: str) -> int:
+    """Integer step from '<prefix>_<steps>_steps.zip' (for numeric sorting)."""
+    base = os.path.basename(path)
+    try:
+        return int(base.rsplit("_steps.zip", 1)[0].rsplit("_", 1)[1])
+    except (IndexError, ValueError):
+        return -1
+
+
+def resolve_model(arg: str | None) -> str:
+    if arg:
+        return arg
+    candidates = glob.glob(DEFAULT_CKPT_GLOB)
+    final = "tmp/ppo/checkpoints/level1_win/level1_win_final.zip"
+    if os.path.exists(final):
+        candidates.append(final)
+    if not candidates:
+        raise FileNotFoundError(
+            f"No model given and none found at {DEFAULT_CKPT_GLOB}"
+        )
+    return max(candidates, key=_ckpt_step)
+
+
+def resolve_states(arg_states: list[str] | None, train_config: dict) -> list[str]:
+    # Priority: explicit --states, then the list embedded in the checkpoint,
+    # then whatever anchor files exist on disk.
+    for candidate in (arg_states, train_config.get("states"), sorted(glob.glob(DEFAULT_STATES_GLOB))):
+        if candidate:
+            existing = [s for s in candidate if os.path.isfile(s)]
+            if existing:
+                return existing
+    raise FileNotFoundError("No anchor .state files found to evaluate on.")
+
+
+def run_episode(env, model, deterministic: bool):
+    obs, _ = env.reset()
+    done = False
+    while not done:
+        action, _ = model.predict(obs, deterministic=deterministic)
+        obs, _, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+    return {
+        "delta_x": info.get("episode_delta_x", 0),
+        "enemy_hp_cost": info.get("episode_enemy_hp_cost", 0.0),
+        "reward": info.get("episode_reward", 0.0),
+        "steps": info.get("episode_steps", 0),
+        "end": info.get("episode_end_reason", "unknown"),
+    }
+
 
 def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Contra Model Testing")
+    parser = argparse.ArgumentParser(description="Evaluate a Contra checkpoint per anchor state")
     parser.add_argument("--model", type=str, default=None,
-                        help="Path to model file")
-    parser.add_argument("--state", type=str, default=STATE,
-                        help="Game state to test on")
-    parser.add_argument("--render", action="store_true",
-                        help="Show live gameplay window")
+                        help="Checkpoint path (default: newest level1_win checkpoint)")
+    parser.add_argument("--states", type=str, nargs="+", default=None,
+                        help="Anchor .state files (default: embedded in model, else ppo/states/*)")
+    parser.add_argument("--episodes", type=int, default=10,
+                        help="Episodes per anchor state")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="Greedy actions instead of sampling")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--gif", action="store_true",
+                        help="Record one episode per state to tmp/ppo/eval/")
     args = parser.parse_args()
 
-    # Resolve model path and name
-    model_path = args.model or os.path.join(MODEL_DIR, DEFAULT_MODEL)
-    model_name = os.path.basename(model_path).replace(".zip", "")
+    model_path = resolve_model(args.model)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model not found: {model_path}")
 
-    # Derive a clean state label for the filename
-    if args.state.endswith(".state"):
-        state_label = os.path.basename(args.state).replace(".state", "")
-    else:
-        state_label = args.state
+    # Load embedded config first: it sets the action tables and the wrapper
+    # settings the model was trained with (skip, stack, reward weights, ...).
+    config = load_config_from_model(model_path) or {}
+    train_config = config.get("train_config", {})
+    if config:
+        apply_config(config)
+    states = resolve_states(args.states, train_config)
 
-    # Always record a GIF named after the model
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    output_path = os.path.join(OUTPUT_DIR, f"{model_name}_{state_label}.gif")
+    np.random.seed(args.seed)
 
-    print("=" * 70)
-    print("Contra (NES) - Model Testing")
-    print("=" * 70)
-    print(f"  Game:         {GAME}")
-    print(f"  State:        {args.state}")
-    print(f"  Model:        {model_path}")
-    print(f"  Render:       {args.render}")
-    print(f"  Recording to: {output_path}")
-    print("=" * 70)
+    print("=" * 78)
+    print("Contra (NES) - Checkpoint Evaluation")
+    print("=" * 78)
+    print(f"  Model:        {model_path}  (step {_ckpt_step(model_path):,})")
+    print(f"  Anchors:      {len(states)}")
+    print(f"  Episodes:     {args.episodes} per anchor  ({'greedy' if args.deterministic else 'stochastic'})")
+    print(f"  skip={config.get('skip', 3)} stack={config.get('stack', 3)} "
+          f"max_steps={train_config.get('max_episode_steps', 2000)}")
+    print("=" * 78)
 
-    # Setup monitor (always record, optionally render)
-    # NES resolution: 256x224
-    monitor = Monitor(240, 224, saved_path=output_path, render=args.render)
+    model = PPO.load(model_path)
 
-    # Create environment
-    # If --state is a file path, load the default state first then override after reset
-    custom_state_data = None
-    if args.state.endswith(".state") and os.path.isfile(args.state):
-        with gzip.open(args.state, "rb") as f:
-            custom_state_data = f.read()
-        init_state = STATE  # use default state for env creation
-        print(f"Custom state file: {args.state}")
-    else:
-        init_state = args.state
-
+    # One emulator instance for the whole run (stable_retro allows only one per
+    # process). RandomStateWrapper holds all anchors; we pin it to one anchor at
+    # a time by swapping its preloaded state_data.
     base_env = retro.make(
-        game=GAME,
-        state=init_state,
+        game=GAME, state="Level1",
         use_restricted_actions=retro.Actions.FILTERED,
         obs_type=retro.Observations.IMAGE,
         render_mode=None,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
-    env = create_env(base_env, monitor=monitor)
+    rsw = RandomStateWrapper(base_env, states=states)
+    all_data = list(rsw.state_data)
+    env = create_env(
+        rsw,
+        random_start_frames=0,
+        warmup_frames=train_config.get("warmup_frames", 240),
+        skip=config.get("skip", 3),
+        stack=config.get("stack", 3),
+        max_episode_steps=train_config.get("max_episode_steps", 2000),
+        enemy_hp_cap_per_region=train_config.get("enemy_hp_cap_per_region", 5.0),
+        reward_weights=train_config.get("reward_weights"),
+    )
 
-    # Load model
-    if os.path.exists(model_path):
-        # Load embedded wrapper config (action table, skip, etc.) if present
-        config = load_config_from_model(model_path)
-        if config:
-            apply_config(config)
-            monitor.skip = config.get("skip", monitor.skip)
-            print(f"Loaded embedded config: skip={config.get('skip')}  actions={config['action_names']}")
-        else:
-            print("No embedded config found, using current defaults")
+    os.makedirs(GIF_DIR, exist_ok=True)
+    header = (f"{'anchor':<34}{'win':>5}{'over':>5}{'tout':>5}"
+              f"{'dx(mean)':>10}{'dx(max)':>9}{'hp':>8}{'reward':>9}")
+    rows = []
+    overall = {"win": 0, "game_over": 0, "time_out": 0, "n": 0}
 
-        print(f"Loading model: {model_path}")
-        model = PPO.load(model_path)
-    else:
-        print(f"Model not found: {model_path}")
-        return
+    for idx, state_path in enumerate(states):
+        rsw.state_data = [all_data[idx]]  # pin this anchor for every reset
+        name = os.path.basename(state_path).replace(".state", "")
 
-    print("\nGame Start!\n")
+        monitor = None
+        if args.gif:
+            monitor = Monitor(240, 224,
+                              saved_path=os.path.join(GIF_DIR, f"{name}.gif"),
+                              render=False)
+            monitor.skip = config.get("skip", 3)
 
-    # Run single episode
-    obs, info = env.reset()
+        ends = {"win": 0, "game_over": 0, "time_out": 0}
+        delta_xs, hp_costs, rewards = [], [], []
+        for ep in range(args.episodes):
+            env.monitor = monitor if (monitor and ep == 0) else None
+            r = run_episode(env, model, args.deterministic)
+            ends[r["end"]] = ends.get(r["end"], 0) + 1
+            delta_xs.append(r["delta_x"])
+            hp_costs.append(r["enemy_hp_cost"])
+            rewards.append(r["reward"])
+        if monitor:
+            monitor.close()
 
-    # Override with custom state after reset (reset clears the emulator state)
-    if custom_state_data:
-        base_env.em.set_state(custom_state_data)
-        base_env.data.update_ram()
-        # Step once with no-op to sync observation with the loaded state
-        no_op = np.zeros(base_env.action_space.shape, dtype=base_env.action_space.dtype)
-        raw_obs, _, _, _, info = base_env.step(no_op)
-        # Re-initialize wrapper's frame stack with the new state
-        from contra_wrapper import process_frame
-        processed = process_frame(raw_obs)
-        env.states = np.concatenate([processed for _ in range(env.stack)], axis=0)
-        obs = env._get_obs()
-        # Re-sync wrapper tracking state
-        env.prev_xscroll = info.get("xscroll", 0)
-        env.prev_score = info.get("score", 0)
-        env.prev_lives = info.get("lives", 0)
-        env.max_x_reached = env.prev_xscroll
-        print(f"Loaded custom state at xscroll={env.prev_xscroll}")
+        for k in overall:
+            if k in ends:
+                overall[k] += ends[k]
+        overall["n"] += args.episodes
 
-    done = False
-    episode_reward = 0
-    episode_actions = 0
-
-    while not done:
-        action, _ = model.predict(obs, deterministic=False)
-
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        episode_reward += reward
-        episode_actions += 1
-
-    episode_score = info.get("score", 0)
-    episode_max_x = info.get("episode_max_x", 0)
-    dist_rwd = info.get("episode_distance_reward", 0)
-    score_rwd = info.get("episode_score_reward", 0)
-    episode_steps = info.get("episode_steps", 0)
-    end_reason = info.get("episode_end_reason", "unknown")
-
-    print(f"Result: {end_reason} | Score: {episode_score} | "
-          f"Reward: {episode_reward:.3f} (dist:{dist_rwd:.2f} score:{score_rwd:.2f}) | "
-          f"Steps: {episode_steps} | Distance: {episode_max_x}")
+        rows.append(
+            f"{name:<34}{ends['win']:>5}{ends['game_over']:>5}{ends['time_out']:>5}"
+            f"{np.mean(delta_xs):>10.0f}{np.max(delta_xs):>9.0f}"
+            f"{np.mean(hp_costs):>8.1f}{np.mean(rewards):>9.1f}"
+        )
 
     env.close()
 
-    # Close monitor and report
-    monitor.close()
-    file_size = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"\nGIF saved: {output_path} ({file_size:.1f} MB)")
-
-    # Print summary
-    print("\n" + "=" * 70)
-    print("RESULTS")
-    print("=" * 70)
-    print(f"  Score:        {episode_score}")
-    print(f"  Reward:       {episode_reward:.3f}")
-    print(f"  Distance:     {episode_max_x}")
-    print(f"  Model:        {model_path}")
-    print(f"  GIF:          {output_path}")
-    print("=" * 70)
+    print("\n" + header)
+    print("-" * len(header))
+    for row in rows:
+        print(row)
+    print("-" * len(header))
+    win_rate = overall["win"] / max(overall["n"], 1)
+    print(f"\nOverall: {overall['n']} episodes | "
+          f"win {overall['win']} ({win_rate:.0%}) | "
+          f"game_over {overall['game_over']} | time_out {overall['time_out']}")
+    if args.gif:
+        print(f"GIFs: {GIF_DIR}/<anchor>.gif")
 
 
 if __name__ == "__main__":
     main()
-

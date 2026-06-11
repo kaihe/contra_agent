@@ -1,353 +1,338 @@
-# Contra-VLA: Vision-Language-Action Model for NES Contra
+# Contra VLA
 
-A Vision-Language-Action (VLA) model that fuses **text instructions**, **game screen frames**, and **RAM state** to predict future action chunks for playing NES Contra. The architecture is adapted from [SimVLA](https://github.com/SimVLA/SimVLA) (a SmolVLM-based VLA for robot manipulation) and repurposed for real-time game control.
+Contra VLA is a behavior-cloning model for NES Contra. It predicts the next
+controller action from one game image, one text goal, and one structured game
+state vector extracted from RAM.
 
----
+The current training contract is deliberately one-step:
 
-## 1. Design Goals
-
-| Goal | Decision |
-|------|----------|
-| **Real-time inference** | Target ≤ 50 ms / forward pass at 20 Hz agent frequency |
-| **Model size** | ~300M parameters (SmolVLM-256M backbone + action transformer) |
-| **Pretrained VLM** | Leverage a pretrained vision-language model for zero-shot scene understanding |
-| **Action chunking** | Predict `T` future actions to reduce compounding errors and inference cost |
-| **Multi-modal fusion** | Deep fusion of text, image, and structured RAM state |
-
----
-
-## 2. Input Modalities
-
-### 2.1 Text Input (Instruction / Strategy)
-
-| Attribute | Value |
-|-----------|-------|
-| **Content** | Natural language task description, e.g. `"Jump over the pit and grab the spread gun"`, `"Kill the boss while dodging bullets"`, `"Stay on the lower platform to avoid enemies"` |
-| **Tokenization** | AutoTokenizer from the VLM backbone (e.g. Qwen2-VL or SmolVLM) |
-| **Max length** | 64 tokens (truncation / padding) |
-| **Special tokens** | `<image>` placeholder token(s) inserted before or around the text, following the VLM's chat template |
-| **Training source** | Human-annotated level strategies, LLM-generated tactics from RAM traces, or simple level-name templates |
-
-Example chat template:
-```
-<|im_start|>user
-<image>\nLevel 1: cross the bridge, watch for snipers.<|im_end|>
-<|im_start|>assistant\n...
+```text
+(image_t, goal_text, state_t) -> action_t
 ```
 
-### 2.2 Image Input (Game Screen)
+There is no action chunk in the BC dataset. There is no two-frame input window.
+The causal requirement is that `image_t` and `state_t` are captured before
+`action_t` is applied.
 
-| Attribute | Value |
-|-----------|-------|
-| **Raw resolution** | 240 × 224 RGB (NES native) |
-| **Input resolution** | **512 × 512 RGB** (resize BICUBIC — SmolVLM-256M SigLIP native resolution) |
-| **Frames per step** | **2 frames** — enough to infer motion (bullets, enemies, player velocity) without excessive compute |
-| **Frame sampling** | Most recent 2 frames, spaced 3 emulator frames apart (≈ 100 ms temporal gap) |
-| **Color space** | RGB (preserves bullet / enemy / power-up colors critical for gameplay) |
-| **Normalization** | ImageNet: `mean=[0.485, 0.456, 0.406]`, `std=[0.229, 0.224, 0.225]` (SmolVLM processor default) |
-| **Multi-view** | No — single game screen only (unlike multi-camera robot VLAs) |
+## Design Goals
 
-**Why 2 frames?**
-- 1 frame is insufficient to infer velocity of bullets / enemies / player.
-- 2 frames ≈ 100 ms of history provides motion cues (direction, speed) while keeping the VLM sequence short and inference fast.
-- NES sprites move slowly enough that 2 frames are sufficient; 4 frames add diminishing returns for Contra.
-- Keeps GPU memory and latency low with the 256M backbone.
+| Goal | Current decision |
+|------|------------------|
+| Supervision | One-step behavior cloning |
+| Image input | One `192x192` RGB game frame |
+| Text input | Fixed level-goal description |
+| State input | `state_from_ram()` vector, currently 118 `float32` values |
+| Action output | One discrete NES controller token |
+| Action space | 36 classes = 9 D-pad states x 4 button states |
+| Dataset source | Successful traces from `synthetic/mc_trace` |
 
-> **Note on resolution:** The NES native 240×224 is upscaled to **512×512** — the native training resolution of SmolVLM-256M's SigLIP encoder (`vision_config.image_size=512`, `patch_size=16` → 32×32=1024 patches → 64 tokens after pixel-shuffle ÷4²). We do **not** use the old 168×168 resolution from `pixel2play/` — that was for the custom SmallResNet encoder. The VLM backbone replaces that entirely.
+The model should be judged as a next-action classifier first. Rollout quality is
+then evaluated by repeatedly querying the policy at each agent step.
 
-### 2.3 State Input (Structured Game State)
+## Inputs
 
-Unlike robot proprioception, Contra's "state" is rich and extracted from NES RAM. It is parsed by `contra/game_state.py` into a structured `proprio` vector fed directly into the action transformer.
+### Text
 
-#### Structured State Features (`proprio`) — **Canonical State Representation**
-Extracted by `contra/game_state.py` into a **118-dim `float32`** vector.
+The dataset uses fixed level-goal text from `vla.datasets.dataset.LEVEL_TEXTS`.
+The collate function tokenizes this text with the VLM tokenizer and pads or
+truncates to 32 tokens.
 
-| Section | Dim | Contents |
-|---------|-----|----------|
-| Numeric player info | 8 | scroll progress, position (x, y), velocity (vx, vy), lives, in_air |
-| One-hot player info | 18 | aim direction (11) + weapon type (5) + rapid fire (2) |
-| Numeric enemy info | 64 | 16 slots × (type, screen_x, screen_y, hp) — inactive slots zeroed |
-| One-hot scene type | 28 | level (8) + routine (11) + location (3) + scrolling (2) + cleared/boss (4) |
-| **Total** | **118** | `contra.game_state.STATE_DIM` |
+### Image
 
-The 118-dim vector is linearly projected to `hidden_size` and concatenated as a conditioning token in the action transformer (SimVLA-style `proprio`). The VLM backbone receives only text and images.
+The dataset stores one pre-action frame per sample:
 
----
-
-## 3. Network Architecture
-
-### 3.1 High-Level Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         ContraVLA Forward Pass                               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  Text ──→ Tokenizer ──→ Text Embeddings ──┐                                 │
-│                                           ├──→ VLM Backbone ──→ VLM Features│
-│  Images ──→ VLM Vision Encoder ───────────┘         [B, T_enc, D]     │     │
-│                                                                        │     │
-│                              ┌─────────────────────────────────────────┘    │
-│                              ▼                                               │
-│  Action Transformer (Causal)                                                │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │  • VLM feature projection + concatenation                               │ │
-│  │  • Proprio embedding (118-dim structured state → linear → hidden_size)  │ │
-│  │  • Action token embeddings (learned) + positional embeddings            │ │
-│  │  → Causal Transformer blocks (depth 12, hidden 768)                     │ │
-│  │  → MLP head per position → 36-way class logits [B, T, 36]               │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│         ↑                    │                                               │
-│  Structured State            ▼                                               │
-│  (118-dim float32)     Action Chunk (T actions)                              │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+```text
+images: [B, 1, 3, 192, 192]
 ```
 
-### 3.2 Component Details
+Frames are generated during preprocessing by replaying traces from
+`synthetic/mc_trace`, capturing the emulator screen before the labeled action,
+resizing to `192x192`, JPG-compressing for storage, and decoding back to RGB in
+the dataloader.
 
-#### 3.2.1 VLM Backbone
-
-| Attribute | Value |
-|-----------|-------|
-| **Base model** | `HuggingFaceTB/SmolVLM-256M-Instruct` |
-| **Parameters** | ~256M |
-| **Rationale** | SmolVLM-256M is the smallest variant in the SmolVLM family. It retains the same SigLIP vision encoder + Idefics3 text model architecture as SimVLA's 500M model, but at roughly half the parameter count — a sweet spot for real-time game control. |
-| **Vision encoder** | SigLIP → patch features |
-| **Connector** | Multi-modal projector mapping vision features to LM space |
-| **Text model** | Idefics3-style lightweight LLM |
-| **Hidden size `D`** | 576 |
-| **Frozen at start?** | Yes — first `N` warmup steps freeze VLM, train only action transformer + heads |
-| **Differential LR** | VLM uses `lr * 0.1`, action transformer uses full `lr` |
-
-**Efficient forward pass**: During training we bypass the chat template and directly construct `[image_tokens, text_tokens]` sequences for batch efficiency, similar to SimVLA's `forward_vlm_efficient`.
-
-#### 3.2.2 Action Transformer
-
-A standard causal Transformer decoder that takes the VLM's fused vision-language features plus structured state, and auto-regressively predicts action tokens.
-
-| Attribute | Value |
-|-----------|-------|
-| **Hidden size** | 768 (projected from VLM's `D=576` via a linear layer) |
-| **Depth** | 12 layers |
-| **Num heads** | 12 |
-| **MLP ratio** | 4× |
-| **Positional encoding** | Learned 1D positional embeddings on action tokens |
-| **Attention mask** | Causal (action token `i` attends to tokens `< i`) |
-
-**Input construction:**
-1. **Action token embeddings**: Ground-truth action indices are embedded via `nn.Embedding(36, hidden_size)` during training; auto-regressively sampled during inference.
-2. **Positional embeddings**: Learned 1D positions for each action slot in the chunk.
-3. **Proprio embedding**: 118-dim structured state → linear projection to `hidden_size`.
-4. **VLM condition**: VLM output features are mean-pooled → linear projection to `hidden_size`.
-5. **Concatenate sequence**: `x = [vlm_proj(vlm_features), proprio_emb, action_emb_0, action_emb_1, ..., action_emb_{T-1}]`
-6. **Causal Transformer**: Pre-LN self-attention blocks with causal masking. Each action position can attend to the VLM/state prefix and all prior action positions.
-7. **Output head**: Shared MLP classifier head on each action position → logits over 36 classes.
-
-#### 3.2.3 Action Head — Discrete Action Space
-
-> **Critical difference from SimVLA:** SimVLA predicts continuous robot joint angles with flow matching. **Contra has a discrete action space** (36 classes). We therefore use a **categorical prediction head** rather than a continuous regression head.
-
-| Attribute | Value |
-|-----------|-------|
-| **Action space** | **36 discrete classes** = 9 D-pad directions × 4 button combos |
-| **D-pad** | `_`, `L`, `R`, `U`, `D`, `UL`, `UR`, `DL`, `DR` |
-| **Buttons** | `_`, `J` (jump/A), `F` (fire/B), `FJ` |
-| **Action chunk size `T`** | **8 future actions** (~400 ms at 20 Hz) |
-| **Prediction target** | Categorical distribution over 36 classes per timestep |
-
-##### Primary Mode: Causal BC with Cross-Entropy (Recommended)
-
-This is the simplest, most proven approach for discrete actions and aligns with the existing `pixel2play/` transformer.
-
-**Sequence layout:**
-```
-[image_tokens_view0] [image_tokens_view1] [text_tokens] [state_token] [a_0] [a_1] ... [a_{T-1}]
-```
-
-**Causal mask rules:**
-- Image, text, and state tokens are fully bidirectional (can attend to each other).
-- Action token `a_i` can attend to all image/text/state tokens **and** all previous action tokens `a_0 ... a_{i-1}`.
-- Action token `a_i` **cannot** attend to future action tokens `a_{i+1} ...`.
-
-**Training:** Teacher-forced cross-entropy:
-```python
-loss = CrossEntropy(logits[:, i, :], action_labels[:, i])  # for i = 0..T-1
-```
-
-**Inference:** Auto-regressive sampling (greedy or temperature):
-```python
-for i in range(T):
-    logits = model(..., generated_actions[:i])
-    action_i = argmax(logits)  # or sample with temperature
-```
-
-##### Experimental Mode: Discrete Flow Matching
-
-As a research extension, we can adapt flow matching to discrete actions by operating in **learned action embedding space**:
-
-1. Embed action indices `a` → `e_a ∈ R^d` via a learned `nn.Embedding(36, d)`.
-2. Sample `t ~ Beta(1.5, 1)`.
-3. Interpolate: `x_t = t * noise + (1 - t) * e_a`.
-4. Model predicts denoising velocity `v_t`.
-5. Loss: `MSE(v_pred, noise - e_a)`.
-6. Inference: Euler integration from noise → `x_0` → nearest-neighbor lookup in embedding table → action index.
-
-**Status:** Experimental only. Causal BC is the default because it is stable, fast (single forward pass), and matches the existing project's proven pipeline.
-
----
-
-## 4. Output: Action Chunk
-
-| Attribute | Value |
-|-----------|-------|
-| **Chunk size** | 8 actions |
-| **Temporal spacing** | Every action is executed for 3 emulator frames (1 agent step = 50 ms) |
-| **Chunk duration** | 8 × 50 ms = 400 ms of gameplay |
-| **Execution** | Execute action 0 immediately, then action 1, ... up to action 7 |
-| **Replanning** | After executing 8 actions (or every 4 actions with temporal aggregation), run a new forward pass |
-| **Temporal aggregation** | Optional: execute first 4 actions, then replan — reduces latency while keeping chunk benefits |
-
-**Action post-processing:**
-- The model predicts 36-class logits per timestep.
-- During training: cross-entropy with ground-truth human / search traces.
-- During inference: argmax (greedy) or temperature sampling.
-- The 36-class index is decoded back to NES `MultiBinary(9)` via `pixel2play.dataset.combine_dpad_button`.
-- **No action normalization** is needed (unlike SimVLA's continuous robot actions) because our action space is already discrete and bounded.
-
----
-
-## 5. Pretrained Checkpoints
-
-### 5.1 Loading Pretrained VLM Weights
+The dataloader normalizes images with ImageNet mean/std:
 
 ```python
-from transformers import AutoModelForVision2Seq, AutoProcessor
+mean = [0.485, 0.456, 0.406]
+std  = [0.229, 0.224, 0.225]
+```
 
-# Load VLM backbone
-vlm_backbone = AutoModelForVision2Seq.from_pretrained(
-    "HuggingFaceTB/SmolVLM-256M-Instruct",
-    torch_dtype=torch.bfloat16,
-)
-processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-500M-Instruct")
+### State
 
-# Initialize ContraVLA with VLM weights
-model = ContraVLA(
-    vlm_config=vlm_backbone.config,
-    action_dim=36,
-    num_actions=8,
+The structured state is generated by:
+
+```python
+contra.game_state.state_from_ram(ram)
+```
+
+Current shape:
+
+```text
+proprio/state: [B, 118]
+```
+
+This vector is projected into the action transformer as a conditioning token.
+The VLM backbone receives image and text tokens; the action transformer receives
+VLM features plus the RAM-derived state token.
+
+## Action Space
+
+The output is one integer token in `[0, 35]`.
+
+```text
+action = dpad_id * 4 + button_id
+```
+
+D-pad states:
+
+```text
+0 neutral
+1 left
+2 right
+3 up
+4 down
+5 up-left
+6 up-right
+7 down-left
+8 down-right
+```
+
+Button states:
+
+```text
+0 none
+1 A / jump
+2 B / fire
+3 A+B / jump+fire
+```
+
+The 36-way action space is lossless for the controller states present in the
+trace files. The earlier 32-way design dropped one D-pad state and caused valid
+episodes containing `down-left` or `down-right` to be skipped; that design is no
+longer used.
+
+## Model Architecture
+
+### High-Level Forward Pass
+
+```text
+image_t + goal_text
+        -> SmolVLM backbone
+        -> VLM token features
+
+state_t
+        -> linear projection
+        -> state conditioning token
+
+VLM token features + state token + one learned action query
+        -> CausalActionTransformer
+        -> logits [B, 1, 36]
+        -> cross-entropy against action_t
+```
+
+### VLM Backbone
+
+The current model uses:
+
+```text
+HuggingFaceTB/SmolVLM-256M-Instruct
+```
+
+Implementation: `vla/model/backbone.py`.
+
+The efficient training path bypasses chat formatting and directly builds a
+sequence from image features and text embeddings:
+
+```text
+[image_tokens, text_tokens] -> language model -> VLM features
+```
+
+### Action Transformer
+
+Implementation: `vla/model/action_transformer.py`.
+
+The action transformer receives:
+
+```text
+[vlm_token_0, ..., vlm_token_n, state_token, action_query]
+```
+
+For the current BC model:
+
+```text
+num_actions = 1
+action_dim  = 36
+```
+
+The code still supports `num_actions > 1`, but the current dataset and training
+contract use exactly one action target per sample. Do not train chunked actions
+from this dataset without changing the dataset contract.
+
+### Config Defaults
+
+Implementation: `vla/model/configuration.py`.
+
+```python
+ContraVLAConfig(
+    vlm_model_name="HuggingFaceTB/SmolVLM-256M-Instruct",
     hidden_size=768,
-    num_layers=12,
+    depth=12,
+    num_heads=12,
+    mlp_ratio=4.0,
+    dropout=0.1,
+    action_dim=36,
+    num_actions=1,
+    proprio_dim=118,
 )
-model.vlm.load_state_dict(vlm_backbone.state_dict(), strict=False)
 ```
 
-### 5.2 Checkpoint Format
+## Dataset
 
-The model is a HuggingFace `PreTrainedModel` with a custom config:
+Dataset design details live in [datasets/readme.md](/home/kaihe/code/contra_agent/vla/datasets/readme.md).
 
-```python
-class ContraVLAConfig(PretrainedConfig):
-    model_type = "contravla"
-    
-    def __init__(
-        self,
-        vlm_model_name="HuggingFaceTB/SmolVLM-256M-Instruct",
-        action_dim=36,
-        num_actions=8,
-        hidden_size=768,
-        num_layers=12,
-        num_heads=12,
-        mlp_ratio=4.0,
-        # Note: only causal transformer is supported; DiT/AdaLN removed
-        proprio_dim=118,     # structured state dimension (game_state.STATE_DIM)
-        ram_dim=2048,        # optional raw RAM tokenization
-        dropout=0.1,
-        **kwargs,
-    ):
-        ...
+Preprocess command:
+
+```bash
+python -m vla.datasets.preprocess \
+  --level 1 \
+  --out vla/data/level1_400 \
+  --n 400
 ```
 
-Saved checkpoints contain:
+`--level 0` processes all `synthetic/mc_trace/win_level*_*.npz` traces.
+`--level 1` through `--level 8` select one level with the fixed filename pattern
+`win_levelN_*.npz`.
+
+Shard layout:
+
+```text
+vla/data/<dataset_name>/
+  train/
+    shard_0000_frames_blob.npy
+    shard_0000_frames_offsets.npy
+    shard_0000_states.npy
+    shard_0000_actions.npy
+    shard_0000_meta.npz
+  val/
+    shard_XXXX_frames_blob.npy
+    shard_XXXX_frames_offsets.npy
+    shard_XXXX_states.npy
+    shard_XXXX_actions.npy
+    shard_XXXX_meta.npz
 ```
-checkpoint/
-├── config.json              # ContraVLAConfig
-├── model.safetensors        # All weights (VLM + action transformer + heads)
-├── preprocessor_config.json # Processor / tokenizer config
-└── action_stats.json        # Action normalization stats (if any)
-```
 
-### 5.3 Training Schedule with Pretrained Weights
-
-| Phase | Steps | VLM LR | Action LR | Notes |
-|-------|-------|--------|-----------|-------|
-| **Warmup (freeze VLM)** | 0 – 1,000 | 0.0 | 1e-4 | Only action transformer + heads train |
-| **Full fine-tuning** | 1,000 – 50,000 | 1e-5 | 1e-4 | VLM unfrozen, 0.1× LR |
-| **Cosine decay** | 50,000 – 100,000 | 1e-5 → 1e-6 | 1e-4 → 1e-5 | Gradual decay |
-
----
-
-## 6. Dataset & Training
-
-### 6.1 Training Data Format
-
-Each training sample is a dict:
+Sample loaded by `ContraVLADataset`:
 
 ```python
 {
-    "input_ids": Tensor[B, L],              # Tokenized text instruction
-    "images": Tensor[B, V, C, H, W],        # V=2 frames, C=3, H=W=384
-    "image_mask": Tensor[B, V],             # All True for our use case
-    "proprio": Tensor[B, 118],               # Structured state (game_state.STATE_DIM)
-    "actions": Tensor[B, T],                # Action chunk indices [0..35]
+    "images":  Tensor[1, 3, 192, 192],
+    "state":   Tensor[118],
+    "proprio": Tensor[118],
+    "actions": Tensor[1],  # one class id in [0, 35]
+    "level_id": int,
 }
 ```
 
-Data sources:
-1. **Human recordings** (`contra/human_recordings/`) — expert demonstrations
-2. **Monte Carlo search traces** (`synthetic/mc_trace/`) — synthetic winning trajectories
-3. **Pruned traces** — after `trim_fire_actions.py` removes redundant inputs
+Batch emitted by `build_collate_fn`:
 
-### 6.2 Data Augmentation
-
-| Modality | Augmentation |
-|----------|-------------|
-| **Images** | RandomColorJitter (brightness, contrast, saturation), random translation ±4 px |
-| **Text** | Random template substitution (e.g. replace "spread gun" with "S gun", "power-up") |
-| **Actions** | None (preserve exact human timing) |
-
-### 6.3 Loss Function
-
-**Primary loss (causal BC):**
 ```python
-loss = CrossEntropy(action_logits, action_labels)  # per-token, teacher-forced
+{
+    "images":    Tensor[B, 1, 3, 192, 192],
+    "input_ids": Tensor[B, 32],
+    "attention_mask": Tensor[B, 32],
+    "state":     Tensor[B, 118],
+    "proprio":   Tensor[B, 118],
+    "actions":   Tensor[B, 1],
+}
 ```
 
-**Optional auxiliary losses:**
+The last saved shard is used as `val/`; all earlier shards are used as
+`train/`. Each shard is shuffled internally before saving.
+
+## Training
+
+Training entry point:
+
+```bash
+python -m vla.train \
+  --data_dir vla/data/level1_400 \
+  --out tmp/vla/level1_400 \
+  --epochs 4 \
+  --batch_size 64 \
+  --workers 4
+```
+
+Loss:
+
 ```python
-loss_total = loss_bc + 0.1 * loss_vlm_prefix  # if using VLM text generation as aux task
+logits = model(input_ids, images, proprio, actions)["logits"]  # [B, 1, 36]
+loss = CrossEntropy(logits.reshape(B, 36), actions.reshape(B))
 ```
----
 
-## 9. File Structure (Proposed)
+The training loop reports validation accuracy as exact next-action accuracy.
 
+## Inference And Rollout
+
+At runtime the policy is queried every agent step:
+
+```text
+current image + current state + goal text -> one action token
+decode token -> NES MultiBinary(9)
+execute for SKIP emulator frames
+repeat
 ```
+
+`SKIP = 3`, so one predicted action corresponds to one 20 Hz agent step.
+
+This differs from the old chunked design. There is no planned execution of
+`T=2`, `T=8`, or any future action sequence in the current BC model.
+
+## Checkpoints
+
+The training script currently saves PyTorch checkpoints:
+
+```text
+last.pt
+best.pt
+```
+
+Each checkpoint contains:
+
+```python
+{
+    "epoch": int,
+    "model": model.state_dict(),
+    "optimizer": optimizer.state_dict(),
+    "val_loss": float,
+}
+```
+
+## Current File Map
+
+```text
 vla/
-├── readme.md                          # This document
-├── model/
-│   ├── __init__.py
-│   ├── configuration_contravla.py     # HF Config class
-│   ├── modeling_contravla.py          # Main ContraVLA model
-│   ├── action_transformer.py          # Causal action transformer
-│   ├── action_hub.py                  # Action normalization, encoding, decoding
-│   └── processing_contravla.py        # Image + text preprocessor
-├── train.py                           # Training loop with Accelerate
-├── inference.py                       # Standalone inference script
-├── eval_env.py                        # Evaluation in stable-retro
-└── datasets/
-    ├── __init__.py
-    └── contra_vla_dataset.py          # PyTorch dataset from npz shards
+  readme.md
+  train.py
+  benchmark.py
+  benchmark_acc.py
+  benchmark_env.py
+  datasets/
+    readme.md
+    dataset.py
+    preprocess.py
+  model/
+    configuration.py
+    backbone.py
+    action_transformer.py
 ```
 
----
+## Notes And Constraints
 
+- The BC dataset stores independent one-step samples, not trajectories.
+- `state` and `proprio` are aliases for the same RAM-derived vector in the
+  current dataloader.
+- The action transformer name still says "causal" because it can support
+  multiple action queries, but with `num_actions=1` it is effectively a
+  conditioned one-step classifier.
+- Any future return to action chunking must update both preprocessing and
+  training targets; it cannot reuse this one-action dataset unchanged.

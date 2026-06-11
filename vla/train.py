@@ -26,10 +26,27 @@ from transformers import AutoTokenizer, get_cosine_schedule_with_warmup
 from vla.datasets import ContraVLADataset, build_collate_fn
 from vla.model import ContraVLA, ContraVLAConfig
 
+DEFAULT_CONFIG = "vla/behavior_clone.yaml"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _load_yaml_defaults(config_path: str) -> dict:
+    if not config_path:
+        return {}
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with open(config_path) as f:
+        defaults = yaml.safe_load(f) or {}
+    if not isinstance(defaults, dict):
+        raise ValueError(f"Config file must contain a YAML mapping: {config_path}")
+
+    # CLI aliases such as --no_freeze_vlm are parser actions, not train() args.
+    defaults.pop("no_freeze_vlm", None)
+    return defaults
 
 def _make_loader(shard_dir: str, collate_fn, batch_size: int,
                  workers: int, shuffle: bool) -> DataLoader:
@@ -72,7 +89,8 @@ def _train_epoch(model, loader, optimizer, scheduler, scaler,
 
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             out  = model(input_ids=batch["input_ids"], images=batch["images"],
-                         proprio=batch["proprio"],    actions=batch["actions"])
+                         proprio=batch["proprio"], attention_mask=batch.get("attention_mask"),
+                         actions=batch["actions"])
             loss = out["loss"]
 
         scaler.scale(loss).backward()
@@ -118,7 +136,8 @@ def _val_epoch(model, loader, device, epoch: int) -> tuple[float, float]:
         batch  = _to(batch, device)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             out    = model(input_ids=batch["input_ids"], images=batch["images"],
-                           proprio=batch["proprio"],    actions=batch["actions"])
+                           proprio=batch["proprio"], attention_mask=batch.get("attention_mask"),
+                           actions=batch["actions"])
         total_loss += out["loss"].item()
         preds      = out["logits"].argmax(-1)   # [B, T]
         correct   += (preds == batch["actions"]).sum().item()
@@ -230,7 +249,7 @@ def train(args: argparse.Namespace) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--config",       default=None, help="Path to YAML config file")
+    p.add_argument("--config",       default=DEFAULT_CONFIG, help="Path to YAML config file")
     p.add_argument("--name",         default=None, help="Experiment name (sets out and log_dir)")
     p.add_argument("--data_dir",     default="vla/data/level1_action2")
     p.add_argument("--out",          default=None)
@@ -254,11 +273,9 @@ def main() -> None:
 
     # First pass: parse --config only so we can load YAML defaults
     partial_args, _ = p.parse_known_args()
-    if partial_args.config is not None and os.path.isfile(partial_args.config):
-        with open(partial_args.config) as f:
-            yaml_defaults = yaml.safe_load(f)
-        if yaml_defaults:
-            p.set_defaults(**yaml_defaults)
+    yaml_defaults = _load_yaml_defaults(partial_args.config)
+    if yaml_defaults:
+        p.set_defaults(**yaml_defaults)
 
     args = p.parse_args()
 

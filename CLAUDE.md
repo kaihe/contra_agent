@@ -1,5 +1,9 @@
 # Contra Agent — Codebase Rules
 
+## Environment
+
+Default conda environment: `vllm-env`. Activate with `conda activate vllm-env` before running Python scripts.
+
 ## Artifacts
 
 All saved artifacts (images, videos, GIFs) must be written to the `tmp/` folder.

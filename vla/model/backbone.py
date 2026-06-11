@@ -1,25 +1,24 @@
-"""ContraVLA: Vision-Language-Action model for NES Contra."""
+"""ContraVLA model: SmolVLM features plus a causal action transformer."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from transformers import PreTrainedModel, AutoModelForImageTextToText
+from transformers import AutoModelForImageTextToText, PreTrainedModel
 
-from .configuration import ContraVLAConfig
 from .action_transformer import CausalActionTransformer
+from .configuration import ContraVLAConfig
+
+
+def _first_attr(obj, names: tuple[str, ...]):
+    for name in names:
+        if hasattr(obj, name):
+            return getattr(obj, name)
+    raise AttributeError(f"{type(obj).__name__} has none of: {', '.join(names)}")
 
 
 class ContraVLA(PreTrainedModel):
-    """
-    SmolVLM backbone + causal action transformer for discrete action chunk prediction.
-
-    Forward pass (training):
-        images + text → VLM features → action transformer → cross-entropy over 36 classes
-
-    Inference:
-        model.generate_actions(...) → action indices [B, T]  (argmax)
-    """
+    """Vision-language-action next-action classifier for NES Contra."""
 
     config_class = ContraVLAConfig
     base_model_prefix = "contravla"
@@ -47,70 +46,132 @@ class ContraVLA(PreTrainedModel):
             dropout=config.dropout,
         )
 
-    # ------------------------------------------------------------------
-    # VLM encoding
-    # ------------------------------------------------------------------
+    def _vision_backbone(self):
+        model = self.vlm.model
+        return _first_attr(model, ("vision_model",))
+
+    def _image_projector(self):
+        model = self.vlm.model
+        return _first_attr(model, ("connector", "multi_modal_projector"))
+
+    def _language_model(self):
+        model = self.vlm.model
+        return _first_attr(model, ("text_model", "language_model"))
+
+    def _text_attention_mask(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if attention_mask is not None:
+            return attention_mask.to(device=input_ids.device, dtype=torch.bool)
+
+        pad_token_id = getattr(self.vlm.config, "pad_token_id", None)
+        text_config = getattr(self.vlm.config, "text_config", None)
+        if pad_token_id is None and text_config is not None:
+            pad_token_id = getattr(text_config, "pad_token_id", None)
+        if pad_token_id is None:
+            return torch.ones_like(input_ids, dtype=torch.bool)
+        return input_ids.ne(pad_token_id)
 
     def forward_vlm_efficient(
         self,
-        pixel_values: torch.FloatTensor,  # [B, V, C, H, W]  V=2 frames, always valid
-        input_ids: torch.LongTensor,      # [B, L]
-    ) -> torch.Tensor:
+        pixel_values: torch.FloatTensor,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor | None = None,
+        return_attention_mask: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Encode images and text as one VLM token sequence.
+
+        Args:
+            pixel_values: [B, V, 3, H, W]. The BC dataset uses V=1; rollout
+                wrappers may pass a longer frame window.
+            input_ids: [B, L] tokenized goal text.
+            attention_mask: optional text mask [B, L], where 1/True is valid.
+            return_attention_mask: return the fused image/text valid-token mask
+                alongside hidden states.
+
+        Returns:
+            VLM hidden states [B, T, D_lm], plus a matching valid-token mask
+            [B, T] when ``return_attention_mask`` is true.
         """
-        Efficient training forward: vision encoder → connector → LM in one shot.
-        Returns fused VLM features [B, T_enc, D].
-        """
-        B, V, C, H, W = pixel_values.shape
-        device, dtype = pixel_values.device, pixel_values.dtype
+        if pixel_values.ndim != 5:
+            raise ValueError(f"pixel_values must be [B, V, C, H, W], got {tuple(pixel_values.shape)}")
+        if input_ids.ndim != 2:
+            raise ValueError(f"input_ids must be [B, L], got {tuple(input_ids.shape)}")
+        if attention_mask is not None and attention_mask.shape != input_ids.shape:
+            raise ValueError(
+                f"attention_mask must be {tuple(input_ids.shape)}, got {tuple(attention_mask.shape)}"
+            )
 
-        # ---- vision encoder: encode all V frames at once ----
-        flat_images = pixel_values.flatten(0, 1)            # [B*V, C, H, W]
+        batch_size, n_frames, channels, height, width = pixel_values.shape
+        flat_images = pixel_values.reshape(batch_size * n_frames, channels, height, width)
 
-        vis_out   = self.vlm.model.vision_model(pixel_values=flat_images, return_dict=True)
-        img_feats = vis_out.last_hidden_state                # [B*V, n_patches, D_vis]
+        vision_out = self._vision_backbone()(pixel_values=flat_images, return_dict=True)
+        image_features = self._image_projector()(vision_out.last_hidden_state)
+        _, n_image_tokens, hidden = image_features.shape
+        image_features = image_features.reshape(
+            batch_size, n_frames * n_image_tokens, hidden
+        )
 
-        connector = getattr(self.vlm.model, "connector", None) \
-                    or self.vlm.model.multi_modal_projector
-        img_feats = connector(img_feats)                     # [B*V, n_patches, D_lm]
-
-        # reshape and flatten frames into one token sequence per sample
-        _, n_patches, D = img_feats.shape
-        img_feats = img_feats.view(B, V * n_patches, D)      # [B, V*n_patches, D]
-
-        # ---- text embeddings ----
-        lm          = getattr(self.vlm.model, "text_model", None) or self.vlm.model.language_model
-        text_embeds = lm.get_input_embeddings()(input_ids)   # [B, L, D]
-
-        # ---- fuse: [img_tokens, text_tokens] → LM ----
-        inputs_embeds = torch.cat([img_feats, text_embeds], dim=1)  # [B, V*n_patches+L, D]
+        lm = self._language_model()
+        text_embeds = lm.get_input_embeddings()(input_ids)
+        image_features = image_features.to(
+            device=text_embeds.device, dtype=text_embeds.dtype
+        )
+        inputs_embeds = torch.cat([image_features, text_embeds], dim=1)
+        image_attention_mask = torch.ones(
+            batch_size,
+            image_features.size(1),
+            dtype=torch.bool,
+            device=text_embeds.device,
+        )
+        text_attention_mask = self._text_attention_mask(input_ids, attention_mask)
+        vlm_attention_mask = torch.cat([image_attention_mask, text_attention_mask], dim=1)
 
         lm_out = lm(
             inputs_embeds=inputs_embeds,
+            attention_mask=vlm_attention_mask,
             output_hidden_states=True,
             return_dict=True,
+            use_cache=False,
         )
-        return lm_out.last_hidden_state  # [B, T_enc, D]
-
-    # ------------------------------------------------------------------
-    # Training forward
-    # ------------------------------------------------------------------
+        if return_attention_mask:
+            return lm_out.last_hidden_state, vlm_attention_mask
+        return lm_out.last_hidden_state
 
     def forward(
         self,
-        input_ids: torch.LongTensor,       # [B, L]
-        images: torch.FloatTensor,         # [B, V, C, H, W]
-        proprio: torch.FloatTensor,        # [B, 118]
-        actions: torch.LongTensor,         # [B, T]  class indices 0..35
+        input_ids: torch.LongTensor,
+        images: torch.FloatTensor,
+        proprio: torch.FloatTensor,
+        attention_mask: torch.Tensor | None = None,
+        actions: torch.LongTensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        vlm_features = self.forward_vlm_efficient(images, input_ids)
-        logits = self.action_transformer(vlm_features, proprio)  # [B, T, 36]
-        B, T, C = logits.shape
-        loss = F.cross_entropy(logits.reshape(B * T, C), actions.reshape(B * T))
-        return {"loss": loss, "logits": logits}
+        vlm_features, vlm_attention_mask = self.forward_vlm_efficient(
+            images,
+            input_ids,
+            attention_mask=attention_mask,
+            return_attention_mask=True,
+        )
+        logits = self.action_transformer(
+            vlm_features, proprio, vlm_attention_mask=vlm_attention_mask
+        )
 
-    # ------------------------------------------------------------------
-    # Inference
-    # ------------------------------------------------------------------
+        out = {"logits": logits}
+        if actions is not None:
+            if actions.ndim == 1:
+                actions = actions.unsqueeze(1)
+            if actions.shape != logits.shape[:2]:
+                raise ValueError(
+                    f"actions must be {tuple(logits.shape[:2])}, got {tuple(actions.shape)}"
+                )
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                actions.reshape(-1),
+            )
+            out["loss"] = loss
+        return out
 
     @torch.no_grad()
     def generate_actions(
@@ -118,20 +179,30 @@ class ContraVLA(PreTrainedModel):
         input_ids: torch.LongTensor,
         images: torch.FloatTensor,
         proprio: torch.FloatTensor,
+        attention_mask: torch.Tensor | None = None,
     ) -> torch.LongTensor:
-        """Returns greedy action indices [B, T] in range [0, 35]."""
-        vlm_features = self.forward_vlm_efficient(images, input_ids)
-        logits = self.action_transformer(vlm_features, proprio)
-        return logits.argmax(dim=-1)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+        """Return greedy action ids [B, num_actions]."""
+        return self(
+            input_ids=input_ids,
+            images=images,
+            proprio=proprio,
+            attention_mask=attention_mask,
+        )["logits"].argmax(-1)
 
     def freeze_vlm(self) -> None:
-        for p in self.vlm.parameters():
-            p.requires_grad_(False)
+        for param in self.vlm.parameters():
+            param.requires_grad_(False)
 
     def unfreeze_vlm(self) -> None:
-        for p in self.vlm.parameters():
-            p.requires_grad_(True)
+        for param in self.vlm.parameters():
+            param.requires_grad_(True)
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None) -> None:
+        if hasattr(self.vlm, "gradient_checkpointing_enable"):
+            self.vlm.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs=gradient_checkpointing_kwargs
+            )
+
+    def gradient_checkpointing_disable(self) -> None:
+        if hasattr(self.vlm, "gradient_checkpointing_disable"):
+            self.vlm.gradient_checkpointing_disable()

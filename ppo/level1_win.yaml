@@ -1,0 +1,60 @@
+# Level 1 win replication — recipe from docs/experiments/5_better_action_space.md
+# adapted to the event-based reward system:
+#   - skip=8 (human play rhythm; B released on last skip frame for auto-fire)
+#   - multi-state training: episode starts sampled across the level + boss arena
+#   - death is non-terminal (respawn with remaining lives, -20 per death)
+#   - entropy 0.1 -> 0.005 over a single 64M budget (no resume re-stretching)
+
+game: Contra-Nes
+state: Level1
+name: level1_10_states
+timesteps: 32000000
+resume:
+seed: 0
+device: cuda
+
+num_envs: 16
+random_start_frames: 0
+warmup_frames: 240
+max_episode_steps: 3000
+enemy_hp_cap_per_region: 5.0
+skip: 8
+stack: 3
+
+n_steps: 1024
+batch_size: 2048
+n_epochs: 10
+gamma: 0.99
+learning_rate: 1.0e-4
+clip_range_initial: 0.2
+clip_range_final: 0.05
+ent_coef_initial: 0.1
+ent_coef_final: 0.005
+
+log_dir: tmp/ppo/logs
+save_dir: tmp/ppo/checkpoints
+save_freq: 62500
+
+states:
+  - ppo/states/win_level1_202603301145_s0000_x0000.state
+  - ppo/states/win_level1_202603301145_s0139_x0325.state
+  - ppo/states/win_level1_202603301145_s0278_x0696.state
+  - ppo/states/win_level1_202603301145_s0418_x1096.state
+  - ppo/states/win_level1_202603301145_s0557_x1426.state
+  - ppo/states/win_level1_202603301145_s0696_x1808.state
+  - ppo/states/win_level1_202603301145_s0835_x2218.state
+  - ppo/states/win_level1_202603301145_s0975_x2553.state
+  - ppo/states/win_level1_202603301145_s1114_x2869.state
+  - ppo/states/win_level1_202603301145_s1253_x3072.state
+
+# Mapped from the exp-5 reward scale: progress ~300 over the level, enemy kills
+# capped per region (~score reward analog), dense boss damage, -20 per death,
+# +100 win, -50 timeout.
+reward_weights:
+  enemy_hp: 1.0
+  boss_hp: 1.0
+  progress: 0.03
+  spread_pick: 20.0
+  levelup: 100.0
+  player_die: -20.0
+  time_out: -50.0

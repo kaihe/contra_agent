@@ -1,0 +1,41 @@
+# Contra PPO defaults. CLI flags override common run fields.
+
+game: Contra-Nes
+state: Level1
+name: baseline
+# Resume runs add this many more steps.
+timesteps: 64000000
+resume:
+seed: 0
+device: cuda
+
+num_envs: 16
+random_start_frames: 60
+warmup_frames: 120
+max_episode_steps: 2000
+enemy_hp_cap_per_region: 2.0
+skip: 3
+stack: 3
+
+n_steps: 1024
+batch_size: 2048
+n_epochs: 3
+gamma: 0.99
+learning_rate: 1.0e-4
+clip_range_initial: 0.2
+clip_range_final: 0.05
+ent_coef_initial: 0.1
+ent_coef_final: 0.005
+
+log_dir: tmp/ppo/logs
+save_dir: tmp/ppo/checkpoints
+save_freq: 125000
+
+reward_weights:
+  enemy_hp: 1.0
+  boss_hp: 1.0
+  progress: 0.03
+  spread_pick: 20.0
+  levelup: 100.0
+  player_die: -50.0
+  time_out: -50.0

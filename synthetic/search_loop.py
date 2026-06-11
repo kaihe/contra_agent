@@ -42,7 +42,7 @@ def main():
     parser.add_argument("--workers",     type=int, default=os.cpu_count())
     parser.add_argument("--rollouts",    type=int, default=512)
     parser.add_argument("--rollout-len", type=int, default=36)
-    parser.add_argument("--max-rewind",  type=int, default=30)
+    parser.add_argument("--max-rewind",  type=int, default=32)
     parser.add_argument("--max-time",    type=int, default=600)
     parser.add_argument("--max-actions", type=int, default=4000)
     parser.add_argument("--goal",        type=str, default="level_up",
