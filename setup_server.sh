@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================
-# Setup Script for Ubuntu 24.04 Cloud Server (China Optimized)
+# Setup Script for Ubuntu 22.04 / 24.04 Cloud Server (China Optimized)
 # For project: contra_agent on Gitee
 # =============================================
 
@@ -8,23 +8,35 @@ set -e  # Exit on any error
 
 echo "=== Starting server setup for China (fast mirrors) ==="
 
-# 1. Change apt sources to Chinese mirrors (Tsinghua + Aliyun)
-echo "→ Configuring fast apt mirrors..."
-sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak || true
+# 1. Change apt sources to Chinese mirrors (auto-detects Ubuntu release + format)
+. /etc/os-release
+CODENAME="${VERSION_CODENAME:-jammy}"
+MAJOR="${VERSION_ID%%.*}"
+echo "→ Configuring fast apt mirrors for Ubuntu ${VERSION_ID:-22.04} (${CODENAME})..."
 
-sudo tee /etc/apt/sources.list.d/ubuntu.sources > /dev/null << 'EOF'
+if [ "${MAJOR:-22}" -ge 24 ]; then
+    # Ubuntu 24.04+ : deb822 format at /etc/apt/sources.list.d/ubuntu.sources
+    sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak 2>/dev/null || true
+    sudo tee /etc/apt/sources.list.d/ubuntu.sources > /dev/null << EOF
 Types: deb
 URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
-Suites: noble noble-updates noble-backports noble-security
-Components: main restricted universe multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-Types: deb
-URIs: https://mirrors.aliyun.com/ubuntu/
-Suites: noble noble-updates noble-backports noble-security
+Suites: ${CODENAME} ${CODENAME}-updates ${CODENAME}-backports ${CODENAME}-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
+else
+    # Ubuntu 22.04 / earlier : traditional one-line format at /etc/apt/sources.list.
+    # Remove any stray deb822 file (e.g. left by a prior 24.04-style run) so apt
+    # does not pull the wrong (noble) suite.
+    sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
+    sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true
+    sudo tee /etc/apt/sources.list > /dev/null << EOF
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse
+EOF
+fi
 
 sudo apt update -qq
 

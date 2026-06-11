@@ -1,4 +1,18 @@
+# === Core / emulator environment ===
 numpy==1.26.4
 stable-retro==0.9.8
-matplotlib==3.6.0
-pygame==2.6.1
+pygame==2.6.1          # imported by the `contra` package at load time (not just GUI)
+matplotlib==3.6.0      # analysis / plotting scripts
+
+# === PPO training (Stable-Baselines3 + PyTorch) ===
+stable-baselines3==2.7.1
+gymnasium==1.0.0
+torch==2.9.0           # GPU: from PyPI/Tsinghua this resolves to the cu12 wheel.
+                       # For a specific CUDA, install separately, e.g.:
+                       #   pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+opencv-python-headless==4.13.0.90   # cv2.resize in contra_wrapper; headless = no GUI libs on a server
+PyYAML==6.0.1          # config loading in ppo/train.py
+tensorboard==2.20.0    # tensorboard_log
+tqdm==4.67.1           # progress_bar=True in model.learn
+rich==14.2.0           # progress_bar=True in model.learn
+imageio==2.37.2        # GIF export in contra_wrapper.Monitor (eval / replay)
