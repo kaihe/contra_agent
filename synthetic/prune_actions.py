@@ -1,21 +1,29 @@
 """
-prune_actions.py — Remove ineffective actions from a Contra trace.
+prune_actions.py — Remove ineffective button presses from a Contra trace.
 
-Algorithm (from annotate/instance.py)
---------------------------------------
-For each step i:
-  1. Save the current emulator state.
-  2. Apply the original action for SKIP frames → ram_orig, next_orig.
-  3. Rewind and apply NOOP for SKIP frames → ram_noop.
-  4. If ram_orig == ram_noop: action had zero effect → commit NOOP.
-     Otherwise: commit original action, rewind to next_orig.
+Algorithm
+---------
+1. Forward pass: replay the trace once, saving for every step the emulator
+   state *before* the action and the RAM snapshot *after* it.
+2. Backward pass: for each step, test each pressed bit (fire, jump, up,
+   down, left, right) independently — rewind, re-step with that single bit
+   zeroed, and drop the bit if RAM comes out identical to the original.
 
-RAM equality is a perfect test for the deterministic NES: identical RAM
+RAM equality is a perfect test on the deterministic NES: identical RAM
 means identical future behaviour, so no lookahead window is needed.
+RAM bytes that merely mirror the controller input are excluded from the
+comparison (see _INPUT_RAM_INDICES).
+
+Why backwards: zeroing a bit at step i while step i+1 still holds it
+would turn a held button into a fresh 0->1 "just pressed" event at i+1
+(e.g. an extra shot or jump), diverging the game state downstream.  A bit
+is therefore only prunable if the already-pruned next step has it at 0.
+Processing back-to-front guarantees pruned[i+1] is final when step i is
+examined.
 
 Usage
 -----
-    python synthetic/prune_actions.py
+    python synthetic/prune_actions.py [--input TRACE.npz] [--output PRUNED.npz]
 """
 
 import argparse
@@ -27,9 +35,7 @@ import stable_retro as retro
 warnings.filterwarnings("ignore", message=".*Gym.*")
 
 from contra.replay import rewind_state, step_env, replay_actions, GAME, SKIP
-from contra.inputs import DPAD_TABLE, BUTTON_TABLE, DPAD_NAMES, BUTTON_NAMES
-
-_NOOP = np.zeros(9, dtype=np.uint8)
+from contra.inputs import DPAD_TABLE, DPAD_NAMES
 
 # RAM bytes that mirror the controller input directly (not gameplay state).
 # Comparing these would always show a difference when fire/jump bits differ,
@@ -72,23 +78,19 @@ _CRITICAL_BITS = [
     (7, "right"),
 ]
 
+
 def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool = True) -> np.ndarray:
-    """Zero out each of the 6 critical input bits when they leave RAM unchanged.
+    """Zero out each critical input bit wherever it leaves RAM unchanged.
 
-    Each bit (fire, jump, up, down, left, right) is tested independently
-    against the original action's RAM result.  Controller-mirror bytes are
-    excluded from the comparison so input-register noise never blocks pruning.
-
-    To avoid creating fake 'Just Pressed' events (0->1 transitions) that diverge
-    the PRNG and game state later, we process the sequence backwards and only
-    allow pruning a bit if the NEXT frame also has that bit as 0.
+    Parameters
+    ----------
+    actions : (N, 9) uint8 array of controller states, one per step.
+    initial_emu_state : emulator savestate the trace starts from.
 
     Returns
     -------
     pruned : np.ndarray (N, 9) uint8
     """
-    import stable_retro as retro
-
     n = len(actions)
     pruned = np.array(actions, dtype=np.uint8).copy()
 
@@ -103,7 +105,7 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
     env.reset()
     rewind_state(env, initial_emu_state)
 
-    # 1. Forward pass to save all true states and true RAMs
+    # Forward pass: record the ground-truth state before and RAM after each step.
     true_states = []
     true_rams = []
     for i in range(n):
@@ -111,50 +113,48 @@ def prune_actions(actions: np.ndarray, initial_emu_state: bytes, verbose: bool =
         step_env(env, actions[i])
         true_rams.append(env.unwrapped.get_ram().copy())
 
-    # 2. Backward pass to prune safely
-    arrays_pruned = 0
+    # Backward pass: try dropping each pressed bit, keep the drop if RAM matches.
+    steps_modified = 0
 
     for i in range(n - 1, -1, -1):
         act_orig = actions[i]
-        
-        # Only consider bits that are 1 and where the NEXT frame (if any) is 0
-        active_bits = []
-        for idx, name in _CRITICAL_BITS:
-            if act_orig[idx] == 1:
-                # Safe to prune if it's the last frame OR the next frame also has this bit as 0
-                if i == n - 1 or pruned[i+1][idx] == 0:
-                    active_bits.append((idx, name))
 
-        if not active_bits:
+        # A bit is a pruning candidate only if pressed here AND already 0 on
+        # the (pruned) next step, so removing it cannot create a fake
+        # 0->1 "just pressed" transition there.
+        candidate_bits = [
+            (idx, name)
+            for idx, name in _CRITICAL_BITS
+            if act_orig[idx] == 1 and (i == n - 1 or pruned[i + 1][idx] == 0)
+        ]
+        if not candidate_bits:
             continue
 
+        # Test bits one at a time; successful drops accumulate in `candidate`.
         candidate = act_orig.copy()
-        cur_state = true_states[i]
-        true_ram = true_rams[i]
-        
-        for idx, name in active_bits:
+        for idx, name in candidate_bits:
             probe = candidate.copy()
             probe[idx] = 0
-            rewind_state(env, cur_state)
+            rewind_state(env, true_states[i])
             step_env(env, probe)
-            if _ram_eq(true_ram, env.unwrapped.get_ram()):
+            if _ram_eq(true_rams[i], env.unwrapped.get_ram()):
                 candidate = probe
-            
+
         pruned[i] = candidate
         if not np.array_equal(candidate, act_orig):
-            arrays_pruned += 1
+            steps_modified += 1
 
     env.close()
 
     if verbose:
-        print(f"    prune: {arrays_pruned}/{n} action arrays modified")
+        print(f"    prune: {steps_modified}/{n} action arrays modified")
 
     return pruned
 
 
 # ── Summary table ──────────────────────────────────────────────────────────────
 
-def show_action_histogram(actions, pruned, verbose=True):
+def show_action_histogram(actions, pruned):
     """Print a before/after table covering fire, jump, and all d-pad directions."""
     dpad_labels = [name for name in DPAD_NAMES if name != "_"]
 
@@ -205,26 +205,31 @@ def verify_level_up(actions, initial_emu_state, label="pruned", verbose=True):
 
 def main():
     parser = argparse.ArgumentParser(description="Prune ineffective actions from a Contra trace")
-    parser.add_argument("--output", default=None, help="Output NPZ path")
+    parser.add_argument(
+        "--input",
+        default="synthetic/mc_trace/win_level1_202603301145.npz",
+        help="Input trace NPZ (needs 'actions' and 'initial_state' keys)",
+    )
+    parser.add_argument("--output", default=None, help="Output NPZ path for the pruned trace")
     args = parser.parse_args()
 
-    # file_path = 'synthetic/mc_trace/win_level1_202604091009.npz'
-    # file_path = 'synthetic/mc_trace/win_level8_202604171419.npz'
-    file_path = 'synthetic/mc_trace/win_level1_202603301145.npz'
-    # file_path = 'synthetic/mc_trace/win_level1_202604101354.npz'
-    ckpt = np.load(file_path, allow_pickle=True)
+    ckpt = np.load(args.input, allow_pickle=True)
     actions = ckpt["actions"]
     initial_emu_state = bytes(ckpt["initial_state"])
 
-    print(f"Loaded {len(actions)} actions from {file_path}\n")
+    print(f"Loaded {len(actions)} actions from {args.input}\n")
 
     pruned = prune_actions(actions, initial_emu_state, verbose=True)
-    show_action_histogram(actions, pruned, verbose=True)
+    passed = verify_level_up(pruned, initial_emu_state, label="pruned", verbose=True)
 
-    verify_level_up(pruned, initial_emu_state, label="pruned", verbose=True)
-
-    
-
+    if args.output:
+        if not passed:
+            print(f"\n  verification FAILED — not saving {args.output}")
+            return
+        data = {key: ckpt[key] for key in ckpt.files}
+        data["actions"] = pruned
+        np.savez(args.output, **data)
+        print(f"\n  saved pruned trace to {args.output}")
 
 
 if __name__ == "__main__":

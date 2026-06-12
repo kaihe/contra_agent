@@ -1,0 +1,5143 @@
+{
+ "trace": "win_level1_202604081953.npz",
+ "chunk": 10,
+ "annotations": [
+  {
+   "t": 0,
+   "thought": "No threats on screen; rifle in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {},
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 0,
+    "down": 1,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 10,
+   "thought": "No threats on screen; rifle in hand. Push right, fire.",
+   "facts": {
+    "enemies": {},
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 20,
+   "thought": "No threats on screen; rifle in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {},
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 30,
+   "thought": "No threats on screen; rifle in hand. Push right, jump, fire.",
+   "facts": {
+    "enemies": {},
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 1,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 33,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 40,
+   "thought": "Soldier ahead; rifle in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 50,
+   "thought": "2 soldiers ahead; rifle in hand. Push right, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 2
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": true,
+    "up": 0,
+    "down": 2,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 59,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 60,
+   "thought": "Soldier ahead, sniper ahead; rifle in hand. Push right, keep firing \u2014 take out the sniper.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Sniper": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 68,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Sniper -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 70,
+   "thought": "Soldier ahead, sniper ahead; rifle in hand. Push right, jump, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 0,
+    "down": 2,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 73,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 80,
+   "thought": "Soldier ahead, pill box sensor ahead, soldier right on top of you; rifle in hand. Push right, aim down, fire \u2014 take out the pill box sensor.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Pill Box Sensor ahead": 1,
+     "Soldier right on top of you": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": true,
+    "up": 0,
+    "down": 6,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Pill Box Sensor": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 85,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Pill Box Sensor -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 90,
+   "thought": "Soldier ahead, soldier below; rifle in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Soldier below": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 100,
+   "thought": "Soldier ahead, soldier above; rifle in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Soldier above": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Regular",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 102,
+      "tag": "GUN_PICKUP",
+      "detail": "Regular \u2192 MachineGun"
+     }
+    ]
+   }
+  },
+  {
+   "t": 110,
+   "thought": "Soldier ahead, soldier above, a power-up capsule in reach; machine gun in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Soldier above": 1
+    },
+    "projectiles": 0,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 120,
+   "thought": "Soldier ahead, soldier above, a power-up capsule in reach; machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Soldier above": 1
+    },
+    "projectiles": 0,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 130,
+   "thought": "Soldier ahead, soldier above, a power-up capsule in reach; machine gun in hand. Push right, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 1,
+     "Soldier above": 1
+    },
+    "projectiles": 0,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 135,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 137,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 140,
+   "thought": "4 soldiers ahead, soldier above, a power-up capsule in reach; machine gun in hand. Hold position, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier above": 1
+    },
+    "projectiles": 0,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 1,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 147,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 150,
+   "thought": "4 soldiers ahead, soldier above, a power-up capsule in reach; machine gun in hand. Hold position, keep firing \u2014 take out the flying capsule and take out the soldier and grab the rapid-fire upgrade.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier above": 1
+    },
+    "projectiles": 0,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 2,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Flying Capsule": 1,
+     "Soldier": 1
+    },
+    "flags": [
+     "grab the rapid-fire upgrade"
+    ],
+    "player_died": false,
+    "events": [
+     {
+      "step": 156,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Flying Capsule -1.0HP"
+     },
+     {
+      "step": 157,
+      "tag": "GUN_POWERUP",
+      "detail": "MachineGun rapid fire"
+     },
+     {
+      "step": 159,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 160,
+   "thought": "5 soldiers ahead; rapid-fire machine gun in hand. Push right, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 166,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 170,
+   "thought": "5 soldiers ahead; rapid-fire machine gun in hand. Push right, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 172,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 180,
+   "thought": "5 soldiers ahead, sniper ahead; rapid-fire machine gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Sniper ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 1,
+    "left": 2,
+    "right": 6,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 190,
+   "thought": "5 soldiers ahead, sniper ahead; rapid-fire machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Sniper ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 200,
+   "thought": "5 soldiers ahead, sniper ahead; rapid-fire machine gun in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Sniper ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 8,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 210,
+   "thought": "5 soldiers ahead, sniper ahead, incoming fire; rapid-fire machine gun in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 220,
+   "thought": "4 soldiers ahead, sniper below, incoming fire; rapid-fire machine gun in hand. Push right, jump, aim down, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper below": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 7,
+    "left": 0,
+    "right": 5,
+    "jumps": 1,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 221,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 224,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 230,
+   "thought": "4 soldiers ahead, sniper behind, incoming fire; rapid-fire machine gun in hand. Push right, keep firing \u2014 take out the soldier and take out the sniper.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 0,
+    "down": 2,
+    "left": 0,
+    "right": 8,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 1,
+     "Sniper": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 230,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 235,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Sniper -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 240,
+   "thought": "4 soldiers ahead, exploding bridge ahead, sniper behind, incoming fire; rapid-fire machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge ahead": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 250,
+   "thought": "4 soldiers ahead, exploding bridge ahead, sniper behind, incoming fire; rapid-fire machine gun in hand. Push right, jump, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge ahead": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 260,
+   "thought": "4 soldiers ahead, exploding bridge ahead, sniper behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge ahead": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 6,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 270,
+   "thought": "4 soldiers ahead, exploding bridge below, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge below": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 280,
+   "thought": "4 soldiers ahead, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 8,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 290,
+   "thought": "4 soldiers ahead, exploding bridge above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge above": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 9,
+    "down": 0,
+    "left": 0,
+    "right": 5,
+    "jumps": 0,
+    "fire_steps": 9,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 300,
+   "thought": "4 soldiers ahead, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 309,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 310,
+   "thought": "4 soldiers ahead, exploding bridge above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge above": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 317,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 320,
+   "thought": "4 soldiers ahead, exploding bridge above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Exploding Bridge above": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 330,
+   "thought": "3 soldiers ahead, soldier behind, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 340,
+   "thought": "3 soldiers ahead, soldier behind, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 3,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 347,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 350,
+   "thought": "3 soldiers ahead, soldier behind, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 1,
+     "Exploding Bridge ahead": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 360,
+   "thought": "3 soldiers ahead, soldier behind, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 1,
+     "Exploding Bridge ahead": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 370,
+   "thought": "3 soldiers ahead, soldier behind, exploding bridge behind, incoming fire; rapid-fire machine gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 1,
+     "Exploding Bridge ahead": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 380,
+   "thought": "3 soldiers ahead, soldier behind, exploding bridge behind; rapid-fire machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 1,
+     "Exploding Bridge above": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 1,
+    "down": 1,
+    "left": 1,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 390,
+   "thought": "3 soldiers ahead, 2 exploding bridges behind, soldier behind; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 2
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 9,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 5,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 398,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 400,
+   "thought": "3 soldiers ahead, 2 exploding bridges behind, soldier behind; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 2
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 410,
+   "thought": "3 soldiers ahead, 2 exploding bridges behind, soldier behind; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Exploding Bridge behind": 2,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 420,
+   "thought": "3 soldiers ahead, soldier behind, sniper ahead; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the sniper.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Sniper ahead": 1,
+     "Rotating Gun ahead": 1,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 0,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {
+     "Sniper": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 420,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Sniper -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 430,
+   "thought": "3 soldiers ahead, soldier behind, sniper ahead, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Sniper ahead": 1,
+     "Rotating Gun ahead": 1,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {
+     "Rotating Gun": 4
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 430,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 432,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 434,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 438,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 440,
+   "thought": "3 soldiers ahead, 2 snipers ahead, soldier behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Sniper ahead": 2,
+     "Rotating Gun ahead": 1,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 5,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {
+     "Rotating Gun": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 448,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 450,
+   "thought": "3 soldiers ahead, soldier behind, sniper ahead, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the rotating gun and take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Sniper ahead": 1,
+     "Rotating Gun above": 1,
+     "Exploding Bridge behind": 1
+    },
+    "projectiles": 1,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 5,
+    "jumps": 0,
+    "fire_steps": 5,
+    "hits": {
+     "Rotating Gun": 2,
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 452,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 453,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 455,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 460,
+   "thought": "3 soldiers ahead, soldier behind, sniper ahead, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the sniper.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Sniper ahead": 1,
+     "Rotating Gun above": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 8,
+    "hits": {
+     "Sniper": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 466,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Sniper -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 470,
+   "thought": "3 soldiers ahead, soldier behind, sniper ahead, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier behind": 1,
+     "Sniper ahead": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 480,
+   "thought": "4 soldiers ahead, sniper ahead, rotating gun behind, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper ahead": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Soldier": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 480,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 483,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 485,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 490,
+   "thought": "4 soldiers ahead, sniper above, rotating gun behind, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 500,
+   "thought": "4 soldiers ahead, sniper above, rotating gun behind, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 510,
+   "thought": "4 soldiers ahead, sniper above, rotating gun behind, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 520,
+   "thought": "4 soldiers ahead, sniper above, rotating gun behind, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 525,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 530,
+   "thought": "4 soldiers ahead, sniper above, rotating gun behind, incoming fire, a power-up capsule in reach; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the flying capsule.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {
+     "Flying Capsule": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 534,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Flying Capsule -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 540,
+   "thought": "3 soldiers ahead, soldier above, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 1,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 547,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 550,
+   "thought": "3 soldiers ahead, soldier above, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Pill Box Sensor ahead": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 558,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 560,
+   "thought": "3 soldiers ahead, 2 snipers above, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the pill box sensor.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier above": 1,
+     "Sniper above": 2,
+     "Rotating Gun ahead": 1,
+     "Pill Box Sensor ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 10,
+    "hits": {
+     "Pill Box Sensor": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 562,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Pill Box Sensor -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 570,
+   "thought": "5 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the rotating gun and take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 6,
+    "down": 3,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 5,
+    "hits": {
+     "Rotating Gun": 4,
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 570,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 572,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 574,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 577,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 578,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 580,
+   "thought": "4 soldiers ahead, soldier above, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 581,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 590,
+   "thought": "4 soldiers ahead, soldier above, sniper above, incoming fire; rapid-fire machine gun in hand. Push right \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Soldier": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 597,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 599,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 600,
+   "thought": "4 soldiers ahead, soldier above, soldier behind, incoming fire; rapid-fire machine gun in hand. Push right, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier above": 1,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Rotating Gun above": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 2,
+    "down": 0,
+    "left": 0,
+    "right": 8,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 609,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 610,
+   "thought": "4 soldiers ahead, soldier above, soldier behind, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier above": 1,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 5,
+    "down": 0,
+    "left": 0,
+    "right": 5,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 617,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 620,
+   "thought": "3 soldiers ahead, 2 soldiers above, soldier behind, incoming fire; rapid-fire machine gun in hand. Push right, fire \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 3,
+     "Soldier above": 2,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Soldier": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 627,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 629,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 630,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1,
+     "Sniper behind": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 4,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 640,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the rotating gun and take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {
+     "Rotating Gun": 1,
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 645,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -3.0HP"
+     },
+     {
+      "step": 649,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 650,
+   "thought": "4 soldiers ahead, soldier behind, soldier right on top of you, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier right on top of you": 1,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 5,
+    "hits": {
+     "Rotating Gun": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 653,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 658,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 660,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, jump, aim up, fire \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 8,
+    "jumps": 1,
+    "fire_steps": 4,
+    "hits": {
+     "Rotating Gun": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 660,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 667,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 670,
+   "thought": "4 soldiers ahead, 2 soldiers behind, sniper above, incoming fire; rapid-fire machine gun in hand. Climb up, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 2,
+     "Sniper above": 1,
+     "Rotating Gun right on top of you": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 8,
+    "down": 0,
+    "left": 0,
+    "right": 2,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {
+     "Rotating Gun": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 670,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 672,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 675,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 680,
+   "thought": "4 soldiers ahead, 2 soldiers behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, jump, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 2,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 690,
+   "thought": "4 soldiers ahead, 2 soldiers behind, sniper above, incoming fire; rapid-fire machine gun in hand. Hold position, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 2,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 1,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 700,
+   "thought": "4 soldiers ahead, 2 soldiers behind, sniper above, incoming fire; rapid-fire machine gun in hand. Hold position, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 2,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 710,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Rotating Gun behind": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 8,
+    "jumps": 0,
+    "fire_steps": 4,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 711,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 720,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 3,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {
+     "Red Turret": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 723,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 724,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 730,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Hold position, jump, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 2,
+    "down": 0,
+    "left": 0,
+    "right": 2,
+    "jumps": 1,
+    "fire_steps": 5,
+    "hits": {
+     "Red Turret": 4
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 730,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 732,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 735,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 738,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 740,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, fire \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Red Turret": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 740,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 750,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 751,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 760,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 5,
+    "hits": {
+     "Red Turret": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 763,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 770,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, jump, aim up.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Red Turret right on top of you": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 780,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1,
+     "Red Turret behind": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 5,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 790,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, jump, aim up, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1,
+     "Red Turret behind": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 4,
+    "hits": {
+     "Red Turret": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 798,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 800,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 8,
+    "hits": {
+     "Red Turret": 4
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 800,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 802,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 804,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 807,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 810,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Climb up, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Red Turret above": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {
+     "Red Turret": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 815,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 817,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 820,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Red Turret above": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 2,
+    "down": 0,
+    "left": 0,
+    "right": 8,
+    "jumps": 0,
+    "fire_steps": 10,
+    "hits": {
+     "Red Turret": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 820,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 830,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, jump, aim down, keep firing \u2014 take out the pill box sensor.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Pill Box Sensor ahead": 1,
+     "Red Turret above": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 0,
+    "down": 3,
+    "left": 0,
+    "right": 9,
+    "jumps": 1,
+    "fire_steps": 6,
+    "hits": {
+     "Pill Box Sensor": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 838,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Pill Box Sensor -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 840,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper right on top of you": 1,
+     "Red Turret behind": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 0,
+    "down": 2,
+    "left": 0,
+    "right": 7,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 850,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 7,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 860,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 6,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 870,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; rapid-fire machine gun in hand. Push right, jump, aim up, keep firing \u2014 take out the sniper.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Machine",
+    "in_air": true,
+    "up": 9,
+    "down": 1,
+    "left": 2,
+    "right": 8,
+    "jumps": 1,
+    "fire_steps": 7,
+    "hits": {
+     "Sniper": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 876,
+      "tag": "GUN_PICKUP",
+      "detail": "MachineGun \u2192 Spread"
+     },
+     {
+      "step": 876,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Sniper -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 880,
+   "thought": "4 soldiers ahead, soldier behind, soldier above, incoming fire; spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 890,
+   "thought": "4 soldiers ahead, 2 snipers above, soldier behind, incoming fire; spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 2
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 900,
+   "thought": "4 soldiers ahead, 2 snipers above, soldier behind, incoming fire; spread gun in hand. Push right, keep firing \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 4,
+     "Soldier behind": 1,
+     "Soldier above": 1,
+     "Sniper above": 2
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 1,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 907,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 910,
+   "thought": "5 soldiers ahead, 2 snipers above, soldier behind, incoming fire; spread gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 2
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 3,
+    "down": 0,
+    "left": 0,
+    "right": 7,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 920,
+   "thought": "5 soldiers ahead, 2 snipers above, soldier behind, incoming fire; spread gun in hand. Push right, jump.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 2
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 930,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; spread gun in hand. Fall back left, aim down, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule",
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 4,
+    "left": 5,
+    "right": 3,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 940,
+   "thought": "6 soldiers ahead, sniper ahead, incoming fire, a power-up capsule in reach; spread gun in hand. Fall back left \u2014 take out the flying capsule.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [
+     "Flying Capsule",
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 10,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Flying Capsule": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 940,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Flying Capsule -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 950,
+   "thought": "6 soldiers ahead, sniper ahead, incoming fire, a power-up capsule in reach; spread gun in hand. Hold position, jump, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 2,
+    "down": 0,
+    "left": 1,
+    "right": 0,
+    "jumps": 1,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 960,
+   "thought": "5 soldiers ahead, soldier behind, sniper ahead, incoming fire, a power-up capsule in reach; spread gun in hand. Push right, aim down, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 5,
+    "left": 0,
+    "right": 3,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 970,
+   "thought": "5 soldiers ahead, soldier behind, sniper ahead, incoming fire, a power-up capsule in reach; spread gun in hand. Push right, jump, fire \u2014 take out the soldier and grab the rapid-fire upgrade.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {
+     "Soldier": 2
+    },
+    "flags": [
+     "grab the rapid-fire upgrade"
+    ],
+    "player_died": false,
+    "events": [
+     {
+      "step": 971,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 975,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 979,
+      "tag": "GUN_POWERUP",
+      "detail": "Spread rapid fire"
+     }
+    ]
+   }
+  },
+  {
+   "t": 980,
+   "thought": "5 soldiers ahead, soldier behind, sniper ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 981,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 990,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, jump, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1000,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 1,
+    "down": 0,
+    "left": 0,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1010,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, jump.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1020,
+   "thought": "5 soldiers ahead, soldier behind, sniper right on top of you, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper right on top of you": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1030,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1040,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1048,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -2.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1050,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, keep firing \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Red Turret": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1058,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -3.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1060,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, aim down, fire \u2014 take out the red turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 7,
+    "left": 0,
+    "right": 3,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Red Turret": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1060,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -1.0HP"
+     },
+     {
+      "step": 1061,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Red Turret -2.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1070,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Hold position, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 1,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1080,
+   "thought": "5 soldiers ahead, soldier behind, sniper above, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 5,
+     "Soldier behind": 1,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1090,
+   "thought": "6 soldiers ahead, sniper above, red turret ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 1,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Soldier": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1092,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 1094,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     },
+     {
+      "step": 1097,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1100,
+   "thought": "6 soldiers ahead, sniper above, red turret ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1110,
+   "thought": "6 soldiers ahead, sniper above, red turret ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, jump.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1120,
+   "thought": "6 soldiers ahead, sniper above, red turret ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1130,
+   "thought": "6 soldiers ahead, sniper above, red turret ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Push right, aim down, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Red Turret ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 6,
+    "left": 0,
+    "right": 8,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1140,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Stay prone, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {
+     "Rotating Gun": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1147,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1150,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire, a power-up capsule in reach; rapid-fire spread gun in hand. Stay prone, fire \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [
+     "Flying Capsule"
+    ],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Rotating Gun": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1150,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1156,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1160,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Stay prone, keep firing \u2014 take out the rotating gun and take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Rotating Gun": 2,
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1161,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1168,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1169,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1170,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Stay prone, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {
+     "Rotating Gun": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1175,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1180,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 1,
+    "left": 0,
+    "right": 9,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Rotating Gun": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1180,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1186,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1190,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, jump \u2014 take out the soldier.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 0,
+    "hits": {
+     "Soldier": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1192,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Soldier -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1200,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1210,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1220,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1230,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1240,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Hold position, aim down, fire \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 3,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Rotating Gun": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1241,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -2.0HP"
+     },
+     {
+      "step": 1246,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1247,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -2.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1250,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Stay prone, jump, keep firing \u2014 take out the rotating gun.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 0,
+    "jumps": 1,
+    "fire_steps": 2,
+    "hits": {
+     "Rotating Gun": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1253,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1254,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     },
+     {
+      "step": 1258,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Rotating Gun -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1260,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 5,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1270,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, jump, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1280,
+   "thought": "6 soldiers ahead, sniper above, rotating gun ahead, incoming fire; rapid-fire spread gun in hand. Push right, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Rotating Gun ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1284,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1290,
+   "thought": "6 soldiers ahead, sniper above, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right \u2014 take out the bomb turret and take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1,
+     "Bomb Turret ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Bomb Turret": 2,
+     "Plated Door": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1294,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1295,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -1.0HP"
+     },
+     {
+      "step": 1296,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1297,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1300,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper above, incoming fire; rapid-fire spread gun in hand. Push right, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1310,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper above, incoming fire; rapid-fire spread gun in hand. Push right, aim up, keep firing \u2014 take out the plated door and take out the bomb turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Sniper above": 1,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {
+     "Plated Door": 4,
+     "Bomb Turret": 6
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1310,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -1.0HP"
+     },
+     {
+      "step": 1311,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1312,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -2.0HP, Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1313,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1314,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP, Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1315,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1316,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -2.0HP"
+     },
+     {
+      "step": 1317,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -3.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1320,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, fire \u2014 take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Plated Door": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1322,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -2.0HP"
+     },
+     {
+      "step": 1323,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -3.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1330,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, jump, aim up, keep firing \u2014 take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 8,
+    "down": 1,
+    "left": 1,
+    "right": 8,
+    "jumps": 1,
+    "fire_steps": 2,
+    "hits": {
+     "Plated Door": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1331,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -2.0HP"
+     },
+     {
+      "step": 1332,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -3.0HP"
+     },
+     {
+      "step": 1334,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1340,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, keep firing \u2014 take out the bomb turret and take out the sniper.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 4,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Bomb Turret": 3,
+     "Sniper": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1340,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -3.0HP"
+     },
+     {
+      "step": 1341,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1343,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1347,
+      "tag": "REGULAR_ENEMY_HIT",
+      "detail": "Sniper -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1350,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, fire \u2014 take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Plated Door": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1359,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -2.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1360,
+   "thought": "6 soldiers ahead, 2 bomb turrets ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up \u2014 take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 2,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 5,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {
+     "Plated Door": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1360,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -3.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1370,
+   "thought": "6 soldiers ahead, bomb turret ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, fire \u2014 take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 6,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Plated Door": 2
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1372,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -2.0HP"
+     },
+     {
+      "step": 1373,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -3.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1380,
+   "thought": "6 soldiers ahead, bomb turret ahead, sniper ahead, incoming fire; rapid-fire spread gun in hand. Push right, jump, aim up, keep firing \u2014 take out the bomb turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Sniper ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 6,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 2,
+    "hits": {
+     "Bomb Turret": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1387,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1388,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1389,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1390,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, keep firing \u2014 take out the bomb turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {
+     "Bomb Turret": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1390,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1397,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1398,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1400,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, jump, aim up, fire \u2014 take out the bomb turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 9,
+    "down": 1,
+    "left": 1,
+    "right": 8,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {
+     "Bomb Turret": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1400,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1410,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, fire \u2014 take out the bomb turret.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {
+     "Bomb Turret": 3
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1411,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -2.0HP"
+     },
+     {
+      "step": 1412,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     },
+     {
+      "step": 1415,
+      "tag": "BOSS_HIT",
+      "detail": "Bomb Turret -1.0HP"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1420,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, jump, aim up, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 10,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 1,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1430,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 6,
+    "down": 0,
+    "left": 3,
+    "right": 6,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1440,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Fall back left.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 4,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1450,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim down, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 3,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1460,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Stay prone, keep firing \u2014 take out the plated door.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 10,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 3,
+    "hits": {
+     "Plated Door": 1
+    },
+    "flags": [],
+    "player_died": false,
+    "events": [
+     {
+      "step": 1461,
+      "tag": "BOSS_HIT",
+      "detail": "Plated Door -1.0HP"
+     },
+     {
+      "step": 1462,
+      "tag": "LEVEL_TRANSITION",
+      "detail": "routine=0x08"
+     }
+    ]
+   }
+  },
+  {
+   "t": 1470,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Hold position, aim down, fire.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 7,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 3,
+    "left": 0,
+    "right": 1,
+    "jumps": 0,
+    "fire_steps": 1,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1480,
+   "thought": "6 soldiers ahead, bomb turret ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Hold position, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Bomb Turret ahead": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 6,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 4,
+    "down": 2,
+    "left": 2,
+    "right": 1,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1490,
+   "thought": "6 soldiers ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up, keep firing.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 3,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 3,
+    "down": 0,
+    "left": 0,
+    "right": 7,
+    "jumps": 0,
+    "fire_steps": 2,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1500,
+   "thought": "6 soldiers ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 10,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1510,
+   "thought": "6 soldiers ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Push right, aim up.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 4,
+    "down": 0,
+    "left": 0,
+    "right": 7,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1520,
+   "thought": "6 soldiers ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1530,
+   "thought": "6 soldiers ahead, plated door ahead, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 6,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1540,
+   "thought": "2 soldiers ahead, 2 soldiers above, soldier right on top of you, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier ahead": 2,
+     "Soldier above": 2,
+     "Soldier right on top of you": 1,
+     "Soldier below": 1,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": true,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1550,
+   "thought": "4 soldiers behind, 2 soldiers right on top of you, plated door ahead, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier right on top of you": 2,
+     "Soldier behind": 4,
+     "Plated Door ahead": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1560,
+   "thought": "6 soldiers behind, plated door right on top of you, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier behind": 6,
+     "Plated Door right on top of you": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1570,
+   "thought": "6 soldiers behind, plated door right on top of you, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier behind": 6,
+     "Plated Door right on top of you": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1580,
+   "thought": "6 soldiers behind, plated door right on top of you, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier behind": 6,
+     "Plated Door right on top of you": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1590,
+   "thought": "6 soldiers behind, plated door right on top of you, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier behind": 6,
+     "Plated Door right on top of you": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  },
+  {
+   "t": 1600,
+   "thought": "6 soldiers behind, plated door right on top of you, incoming fire; rapid-fire spread gun in hand. Hold position.",
+   "facts": {
+    "enemies": {
+     "Soldier behind": 6,
+     "Plated Door right on top of you": 1
+    },
+    "projectiles": 2,
+    "pickups": [],
+    "weapon": "Spray",
+    "in_air": false,
+    "up": 0,
+    "down": 0,
+    "left": 0,
+    "right": 0,
+    "jumps": 0,
+    "fire_steps": 0,
+    "hits": {},
+    "flags": [],
+    "player_died": false,
+    "events": []
+   }
+  }
+ ]
+}

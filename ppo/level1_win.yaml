@@ -48,13 +48,15 @@ states:
   - ppo/states/win_level1_202603301145_s1253_x3072.state
 
 # Mapped from the exp-5 reward scale: progress ~300 over the level, enemy kills
-# capped per region (~score reward analog), dense boss damage, -20 per death,
-# +100 win, -50 timeout.
+# capped per region (~score reward analog), dense boss damage, +100 win,
+# -50 timeout. Death now terminates the episode (episodic-life), so the
+# per-death penalty is reduced to -15 — losing all future reward carries
+# most of the cost.
 reward_weights:
   enemy_hp: 1.0
   boss_hp: 1.0
   progress: 0.03
   spread_pick: 20.0
   levelup: 100.0
-  player_die: -20.0
+  player_die: -15.0
   time_out: -50.0

@@ -155,10 +155,10 @@ def main():
     )
 
     os.makedirs(GIF_DIR, exist_ok=True)
-    header = (f"{'anchor':<34}{'win':>5}{'over':>5}{'tout':>5}"
+    header = (f"{'anchor':<34}{'win':>5}{'die':>5}{'over':>5}{'tout':>5}"
               f"{'dx(mean)':>10}{'dx(max)':>9}{'hp':>8}{'reward':>9}")
     rows = []
-    overall = {"win": 0, "game_over": 0, "time_out": 0, "n": 0}
+    overall = {"win": 0, "death": 0, "game_over": 0, "time_out": 0, "n": 0}
 
     for idx, state_path in enumerate(states):
         rsw.state_data = [all_data[idx]]  # pin this anchor for every reset
@@ -171,7 +171,7 @@ def main():
                               render=False)
             monitor.skip = config.get("skip", 3)
 
-        ends = {"win": 0, "game_over": 0, "time_out": 0}
+        ends = {"win": 0, "death": 0, "game_over": 0, "time_out": 0}
         delta_xs, hp_costs, rewards = [], [], []
         for ep in range(args.episodes):
             env.monitor = monitor if (monitor and ep == 0) else None
@@ -189,7 +189,7 @@ def main():
         overall["n"] += args.episodes
 
         rows.append(
-            f"{name:<34}{ends['win']:>5}{ends['game_over']:>5}{ends['time_out']:>5}"
+            f"{name:<34}{ends['win']:>5}{ends['death']:>5}{ends['game_over']:>5}{ends['time_out']:>5}"
             f"{np.mean(delta_xs):>10.0f}{np.max(delta_xs):>9.0f}"
             f"{np.mean(hp_costs):>8.1f}{np.mean(rewards):>9.1f}"
         )
@@ -204,6 +204,7 @@ def main():
     win_rate = overall["win"] / max(overall["n"], 1)
     print(f"\nOverall: {overall['n']} episodes | "
           f"win {overall['win']} ({win_rate:.0%}) | "
+          f"death {overall['death']} | "
           f"game_over {overall['game_over']} | time_out {overall['time_out']}")
     if args.gif:
         print(f"GIFs: {GIF_DIR}/<anchor>.gif")

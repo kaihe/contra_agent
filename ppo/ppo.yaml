@@ -37,5 +37,5 @@ reward_weights:
   progress: 0.03
   spread_pick: 20.0
   levelup: 100.0
-  player_die: -50.0
+  player_die: -15.0
   time_out: -50.0

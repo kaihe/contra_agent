@@ -208,7 +208,7 @@ DEFAULT_REWARD_WEIGHTS = {
     "progress": 1.0 / 60.0,
     "spread_pick": 20.0,
     "levelup": 100.0,
-    "player_die": -50.0,
+    "player_die": -15.0,
     "time_out": -10.0,
 }
 
@@ -314,12 +314,16 @@ class ContraWrapper(gym.Wrapper):
             + events["enemy_hp"]
         )
 
-        # Death is not terminal: the player respawns with remaining lives and
-        # only the per-death penalty applies. The retro scenario signals done
-        # at true game over (lives == 0 and death) and on level increment.
+        # Death is terminal (episodic-life trick): ending the episode makes a
+        # death cost all remaining future reward, which is a far stronger
+        # signal than the flat penalty alone. Levelup is checked first so a
+        # simultaneous levelup+death still counts as a win.
         if rewards["levelup"] != 0.0:
             done = True
             end_reason = "win"
+        elif rewards["player_die"] != 0.0:
+            done = True
+            end_reason = "death"
         elif done:
             end_reason = "game_over"
         elif timed_out:
