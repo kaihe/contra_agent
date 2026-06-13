@@ -11,6 +11,7 @@ import argparse
 import dataclasses
 import glob
 import os
+import shutil
 import warnings
 from dataclasses import dataclass, field
 
@@ -125,7 +126,7 @@ def parse_args() -> PPOConfig:
         "name": args.name,
     }
     config_data.update({k: v for k, v in overrides.items() if v is not None})
-    return _config_from_mapping(config_data)
+    return _config_from_mapping(config_data), args.config
 
 
 class LatestCheckpointCallback(CheckpointCallback):
@@ -267,12 +268,17 @@ def make_env(config: PPOConfig, rank: int):
 
 
 def main():
-    config = parse_args()
+    config, config_path = parse_args()
     train_config = dataclasses.asdict(config)
     checkpoint_dir = os.path.join(config.save_dir, config.name)
 
     os.makedirs(config.log_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Stash the exact YAML used so each run's checkpoint dir is self-describing.
+    # The matching TB run dir gets a copy too, once SB3 has resolved its
+    # auto-incremented "{name}_{id}" path inside model.learn() (see below).
+    shutil.copy2(config_path, os.path.join(checkpoint_dir, os.path.basename(config_path)))
 
     print("=" * 70)
     print("Contra (NES) - PPO Training")
@@ -351,6 +357,11 @@ def main():
         progress_bar=True,
         reset_num_timesteps=not bool(config.resume),
     )
+
+    # model.logger.dir is the resolved TB run dir (e.g. "<log_dir>/<name>_3").
+    tb_run_dir = model.logger.dir
+    if tb_run_dir and os.path.isdir(tb_run_dir):
+        shutil.copy2(config_path, os.path.join(tb_run_dir, os.path.basename(config_path)))
 
     final_path = os.path.join(checkpoint_dir, f"final.zip")
     model.save(final_path)

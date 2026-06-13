@@ -8,21 +8,24 @@
 #
 # The GPU is exclusive while this runs — stop the server before training.
 #
-# Default model: local Gemma 4 E2B w4a16 checkpoint (compressed-tensors, the
-# only Gemma 4 QAT serialization vLLM can load). Download it first with:
-#   MODEL=google/gemma-4-E2B-it-qat-w4a16-ct ./annotate/download_gemma4.sh
-# NOTE: the qat-mobile (wNa8o8) build does NOT work with vLLM (its
-# quant_method "gemma" targets phone NPUs) — use it via transformers only.
+# Default model: local Qwen3-VL-2B-Instruct-FP8 checkpoint.
+# Download it first with:
+#   ./annotate/download_weight.sh
 # Alternatives:
+#   MODEL=tmp/models/gemma-4-E2B-it-qat-w4a16-ct
 #   MODEL=Qwen/Qwen3-VL-8B-Instruct-FP8
 #   MODEL=Qwen/Qwen3-VL-4B-Instruct      (bf16, ~9GB, no quantization)
 
 set -euo pipefail
 
-MODEL="${MODEL:-tmp/models/gemma-4-E2B-it-qat-w4a16-ct}"
+MODEL="${MODEL:-tmp/models/Qwen3-VL-2B-Instruct-FP8}"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate qwen-serve
+
+# FlashInfer JIT-compiles sampling kernels with the system nvcc; CUDA 12.1
+# rejects gcc 13 on this machine. Fall back to the PyTorch-native sampler.
+export VLLM_USE_FLASHINFER_SAMPLER=0
 
 exec vllm serve "$MODEL" \
     --served-model-name annotator \

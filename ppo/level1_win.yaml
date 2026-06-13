@@ -1,14 +1,26 @@
 # Level 1 win replication — recipe from docs/experiments/5_better_action_space.md
 # adapted to the event-based reward system:
 #   - skip=8 (human play rhythm; B released on last skip frame for auto-fire)
-#   - multi-state training: episode starts sampled across the level + boss arena
-#   - death is non-terminal (respawn with remaining lives, -20 per death)
-#   - entropy 0.1 -> 0.005 over a single 64M budget (no resume re-stretching)
+#   - multi-state training: episode starts sampled across the win trajectory
+#     (202603301145), which already spans the level and the boss fight
+#   - death is terminal (episodic-life, -15 per death)
+#   - entropy 0.1 -> 0.005 over the budget (no resume re-stretching)
+#
+# Revised after the level1_10_states_one_live (64M) run, where the agent
+# learned to camp and farm enemies instead of advancing: ep_len ballooned
+# 150 -> ~1600 while delta_x stayed flat ~300 and win_rate never left ~0.03.
+# Changes vs that run:
+#   - progress 0.03 -> 0.1 and enemy_hp cap 5.0 -> 2.5: advancing now out-earns
+#     farming, so survival/camping is no longer the dominant strategy
+#   - max_episode_steps 3000 -> 2000: timeout (-50) bites campers sooner while
+#     still leaving margin for a full x0 traverse (~1250 steps in the demo)
+#   - n_epochs 10 -> 4 and clip_range_final 0.05 -> 0.1: the old run's
+#     clip_fraction climbed to 0.43 (healthy <0.2) late — updates were thrashing
 
 game: Contra-Nes
 state: Level1
-name: level1_10_states
-timesteps: 32000000
+name: level1_9_states_less_hp
+timesteps: 64000000
 resume:
 seed: 0
 device: cuda
@@ -16,18 +28,18 @@ device: cuda
 num_envs: 16
 random_start_frames: 0
 warmup_frames: 240
-max_episode_steps: 3000
-enemy_hp_cap_per_region: 5.0
+max_episode_steps: 2000
+enemy_hp_cap_per_region: 2.5
 skip: 8
 stack: 3
 
 n_steps: 1024
 batch_size: 2048
-n_epochs: 10
+n_epochs: 4
 gamma: 0.99
 learning_rate: 1.0e-4
 clip_range_initial: 0.2
-clip_range_final: 0.05
+clip_range_final: 0.1
 ent_coef_initial: 0.1
 ent_coef_final: 0.005
 
@@ -45,17 +57,17 @@ states:
   - ppo/states/win_level1_202603301145_s0835_x2218.state
   - ppo/states/win_level1_202603301145_s0975_x2553.state
   - ppo/states/win_level1_202603301145_s1114_x2869.state
-  - ppo/states/win_level1_202603301145_s1253_x3072.state
 
-# Mapped from the exp-5 reward scale: progress ~300 over the level, enemy kills
-# capped per region (~score reward analog), dense boss damage, +100 win,
-# -50 timeout. Death now terminates the episode (episodic-life), so the
-# per-death penalty is reduced to -15 — losing all future reward carries
-# most of the cost.
+# Mapped from the exp-5 reward scale: progress ~300 over the level (0.1/px,
+# clipped at 30px/step), enemy kills capped per region (~score reward analog),
+# dense boss damage, +100 win, -50 timeout. Death terminates the episode
+# (episodic-life), so the per-death penalty is reduced to -15 — losing all
+# future reward carries most of the cost. progress was bumped 0.03 -> 0.1 and
+# the enemy cap lowered 5.0 -> 2.5 so advancing out-earns standing and farming.
 reward_weights:
   enemy_hp: 1.0
   boss_hp: 1.0
-  progress: 0.03
+  progress: 0.1
   spread_pick: 20.0
   levelup: 100.0
   player_die: -15.0
