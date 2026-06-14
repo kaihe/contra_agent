@@ -23,6 +23,7 @@ import stable_retro as retro
 import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
@@ -68,8 +69,9 @@ class PPOConfig:
     ent_coef_initial: float = 0.1
     ent_coef_final: float = 0.005
 
-    log_dir: str = "tmp/ppo/logs"
-    save_dir: str = "tmp/ppo/checkpoints"
+    # Per-experiment outputs (checkpoints + tensorboard events) all go in
+    # out_dir/<name>.
+    out_dir: str = "tmp/ppo"
     save_freq: int = 125000
     reward_weights: dict[str, float] = field(
         default_factory=lambda: DEFAULT_REWARD_WEIGHTS.copy()
@@ -91,6 +93,15 @@ def _config_from_mapping(data: dict) -> PPOConfig:
         raise ValueError(f"Unknown PPO config field(s): {unknown}")
 
     merged = dict(data)
+    if merged.get("states"):
+        # Entries may be glob patterns (e.g. ppo/states/level1_*.state) or
+        # literal paths; expand globs, keep literals as-is (missing ones error
+        # later in RandomStateWrapper).
+        expanded = []
+        for entry in merged["states"]:
+            matches = sorted(glob.glob(entry))
+            expanded.extend(matches if matches else [entry])
+        merged["states"] = expanded
     if "reward_weights" in merged:
         weights = DEFAULT_REWARD_WEIGHTS.copy()
         unknown_weights = sorted(set(merged["reward_weights"]) - set(weights))
@@ -270,15 +281,13 @@ def make_env(config: PPOConfig, rank: int):
 def main():
     config, config_path = parse_args()
     train_config = dataclasses.asdict(config)
-    checkpoint_dir = os.path.join(config.save_dir, config.name)
+    # One directory per experiment holds both checkpoints and tensorboard events.
+    exp_dir = os.path.join(config.out_dir, config.name)
 
-    os.makedirs(config.log_dir, exist_ok=True)
-    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(exp_dir, exist_ok=True)
 
-    # Stash the exact YAML used so each run's checkpoint dir is self-describing.
-    # The matching TB run dir gets a copy too, once SB3 has resolved its
-    # auto-incremented "{name}_{id}" path inside model.learn() (see below).
-    shutil.copy2(config_path, os.path.join(checkpoint_dir, os.path.basename(config_path)))
+    # Stash the exact YAML used so each run's dir is self-describing.
+    shutil.copy2(config_path, os.path.join(exp_dir, os.path.basename(config_path)))
 
     print("=" * 70)
     print("Contra (NES) - PPO Training")
@@ -291,8 +300,7 @@ def main():
     print(f"  Envs:         {config.num_envs}")
     print(f"  Steps to run: {config.timesteps:,}")
     print(f"  Random start: {config.random_start_frames} frames")
-    print(f"  Log dir:      {config.log_dir}")
-    print(f"  Save dir:     {checkpoint_dir}")
+    print(f"  Output dir:   {exp_dir}  (checkpoints + tensorboard)")
     if config.resume:
         print(f"  Resume:       {config.resume}")
     print("=" * 70)
@@ -335,12 +343,16 @@ def main():
             ent_coef=config.ent_coef_initial,
             learning_rate=config.learning_rate,
             clip_range=clip_range_schedule,
-            tensorboard_log=config.log_dir,
         )
+
+    # Write tensorboard events straight into exp_dir (alongside checkpoints),
+    # not SB3's auto-incremented "<log_dir>/<name>_N" subdir. Setting a custom
+    # logger also stops learn() from reconfiguring it.
+    model.set_logger(configure(exp_dir, ["tensorboard"]))
 
     checkpoint_callback = LatestCheckpointCallback(
         save_freq=config.save_freq,
-        save_path=checkpoint_dir,
+        save_path=exp_dir,
         name_prefix=config.name,
         train_config=train_config,
     )
@@ -353,17 +365,11 @@ def main():
     model.learn(
         total_timesteps=config.timesteps,
         callback=callbacks,
-        tb_log_name=config.name,
         progress_bar=True,
         reset_num_timesteps=not bool(config.resume),
     )
 
-    # model.logger.dir is the resolved TB run dir (e.g. "<log_dir>/<name>_3").
-    tb_run_dir = model.logger.dir
-    if tb_run_dir and os.path.isdir(tb_run_dir):
-        shutil.copy2(config_path, os.path.join(tb_run_dir, os.path.basename(config_path)))
-
-    final_path = os.path.join(checkpoint_dir, f"final.zip")
+    final_path = os.path.join(exp_dir, "final.zip")
     model.save(final_path)
     save_config_to_model(
         final_path,

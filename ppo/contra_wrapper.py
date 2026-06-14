@@ -263,6 +263,7 @@ class ContraWrapper(gym.Wrapper):
 
         self.prev_ram = np.zeros(2048, dtype=np.uint8)
         self.prev_xscroll = 0
+        self.max_xscroll = 0
         self.prev_score = 0
         self.prev_lives = 0
         self.episode_start_x = 0
@@ -288,6 +289,10 @@ class ContraWrapper(gym.Wrapper):
     def _compute_rewards(self, info, done):
         curr_ram = self.unwrapped.get_ram()
         curr_xscroll = xscroll(curr_ram)
+        # High-water mark of progress. Used for episode_delta_x because a
+        # levelup resets xscroll to ~0 on the winning frame; tracking the max
+        # keeps the real furthest-right position instead of that reset value.
+        self.max_xscroll = max(self.max_xscroll, curr_xscroll)
         curr_score   = info.get("score", self.prev_score)
         curr_lives   = info.get("lives", self.prev_lives)
         enemy_hp_region = curr_xscroll // ENEMY_HP_REGION_SIZE_PX
@@ -372,6 +377,7 @@ class ContraWrapper(gym.Wrapper):
         ram = self.unwrapped.get_ram()
         self.prev_ram = ram.copy()
         self.prev_xscroll = xscroll(ram)
+        self.max_xscroll = self.prev_xscroll
         self.episode_start_x = self.prev_xscroll
         self.prev_score = info.get("score", 0)
         self.prev_lives = info.get("lives", 2)
@@ -418,7 +424,7 @@ class ContraWrapper(gym.Wrapper):
 
         if done:
             info.update({
-                "episode_delta_x": self.prev_xscroll - self.episode_start_x,
+                "episode_delta_x": self.max_xscroll - self.episode_start_x,
                 "episode_enemy_hp_cost": self.ep["enemy_hp_cost"],
                 "episode_reward": self.ep["reward"],
                 "episode_end_reason": self.ep["end_reason"],

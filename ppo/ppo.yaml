@@ -27,8 +27,7 @@ clip_range_final: 0.05
 ent_coef_initial: 0.1
 ent_coef_final: 0.005
 
-log_dir: tmp/ppo/logs
-save_dir: tmp/ppo/checkpoints
+out_dir: tmp/ppo            # checkpoints + tensorboard go in out_dir/<name>
 save_freq: 125000
 
 reward_weights:
