@@ -205,6 +205,7 @@ def search_and_play(env, initial_emu_state: bytes,
     current_rollouts  = rollouts
     t_start           = time.time()
     pending_events: list[str] = []
+    total_sampled_actions = 0   # total actions sampled across all rollouts
 
     if verbose:
         print(f"\n  {'step':>4}  {'reward':>7}  {'death':>5}  {'rolls':>5}  {'time':>7}  event")
@@ -256,6 +257,8 @@ def search_and_play(env, initial_emu_state: bytes,
             rollout_results = [run_random_rollout(env, committed.emu_state, rollout_len, current_level)
                                for _ in range(current_rollouts)]
             rewind_state(env, committed.emu_state)
+
+        total_sampled_actions += sum(len(seq) for seq, _, _ in rollout_results)
 
         best_seq, best_rollout_reward, best_died = None, -float('inf'), True
         died_count = 0
@@ -344,7 +347,7 @@ def search_and_play(env, initial_emu_state: bytes,
             print(f"  {step_num:4d}  {current_reward:7.1f}  {death_rate:5.2f}  {current_rollouts:5d}  {elapsed:6.1f}s  {ev_col}")
             pending_events.clear()
 
-    return committed_actions, committed, rewards
+    return committed_actions, committed, rewards, total_sampled_actions
 
 
 FPS = 20  # logical fps = 60 NES fps / SKIP
@@ -397,7 +400,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     if prefix:
         print(f"{prefix}start  level={level}  workers={workers}", flush=True)
 
-    actions, final_state, rewards = search_and_play(
+    actions, final_state, rewards, total_sampled_actions = search_and_play(
         env, initial_emu_state,
         rollouts=rollouts, rollout_len=rollout_len, max_time=max_time,
         level=level, max_rewind=max_rewind, max_actions=max_actions,
@@ -413,6 +416,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
         print(f"\n{'=' * 70}\nRESULT\n{'=' * 70}")
         print(f"  Actions: {len(actions)}")
         print(f"  Reward:  {rewards[-1] if rewards else 0.0:.2f}")
+        print(f"  Sampled: {total_sampled_actions}")
 
     if not final_state.done:
         if prefix:
@@ -427,14 +431,14 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     save_trace(initial_state_for_npz, actions, trace_path, level=level)
     if prefix:
         reward_str = f"{rewards[-1]:.1f}" if rewards else "0.0"
-        print(f"{prefix}WIN   steps={len(actions)}  reward={reward_str}  → {trace_path}", flush=True)
+        print(f"{prefix}WIN   steps={len(actions)}  reward={reward_str}  sampled={total_sampled_actions}  → {trace_path}", flush=True)
     return trace_path
 
 
 def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
     parser.add_argument("--level",       type=int, default=1, choices=list(range(1, 9)))
-    parser.add_argument("--rollouts",    type=int, default=512)
+    parser.add_argument("--rollouts",    type=int, default=128)
     parser.add_argument("--rollout-len", type=int, default=48)
     parser.add_argument("--max-rewind",  type=int, default=30,
                         help="Max steps to rewind on backtrack (default: 30)")

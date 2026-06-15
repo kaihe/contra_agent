@@ -1,3 +1,7 @@
 1. remove levelup reward to make the value loss stable.
 2. more game states with different guns
+    -- with 45 states, test if the train process is more stable than 9 states
+
 3. less n_steps: 1024 ? a stupid model does not need to sample 1024 step to get itself killed. 512 is a better choice to learn faster
+
+4. some game states are with very low win rate, trim them may increase learning spead

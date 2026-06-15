@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-MODEL="${MODEL:-Qwen/Qwen3-VL-2B-Instruct-FP8}"
+MODEL="${MODEL:-Qwen/Qwen3-VL-8B-Instruct-FP8}"
 DEST="tmp/models/$(basename "$MODEL")"
 
 mkdir -p "$DEST"

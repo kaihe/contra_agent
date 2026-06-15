@@ -62,7 +62,7 @@ reward_weights:
   enemy_hp: 1.0
   boss_hp: 1.0
   progress: 0.1
-  spread_pick: 20.0
-  levelup: 100.0
+  spread_pick: 2.0
+  levelup: 1.0
   player_die: -15.0
   time_out: -50.0
