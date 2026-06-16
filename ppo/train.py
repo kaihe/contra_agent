@@ -239,19 +239,34 @@ def linear_schedule(initial_value, final_value=0.0):
 
 
 def infer_level(state: str) -> int:
-    """Infer level number from a state name such as Level2 or Level2_x100.state."""
+    """Infer level number from a state name such as Level2 or level2_x100.state."""
     import re
     match = re.search(r"Level(\d+)", os.path.basename(state), re.IGNORECASE)
     return int(match.group(1)) if match else 1
 
 
+def resolve_level_and_boot(config: PPOConfig) -> tuple[int, str]:
+    """Determine the training level and the emulator boot state.
+
+    With multi-state training (`states` set), every episode is overridden by a
+    random anchor on reset, so the config needs no `state`: the level is inferred
+    from the anchor filenames and the boot state is the canonical state for that
+    level. Single-state runs fall back to `config.state`.
+    """
+    if config.states:
+        level = infer_level(config.states[0])
+        boot = "Level1" if level == 1 else f"spread_gun_state/Level{level}"
+        return level, boot
+    return infer_level(config.state), config.state
+
+
 def make_env(config: PPOConfig, rank: int):
-    level = infer_level(config.state)
+    level, boot_state = resolve_level_and_boot(config)
 
     def _init():
         env = retro.make(
             game=config.game,
-            state=config.state,
+            state=boot_state,
             use_restricted_actions=retro.Actions.FILTERED,
             obs_type=retro.Observations.IMAGE,
             render_mode=None,
@@ -292,9 +307,10 @@ def main():
     print("=" * 70)
     print("Contra (NES) - PPO Training")
     print("=" * 70)
+    level, boot_state = resolve_level_and_boot(config)
     print(f"  Experiment:   {config.name}")
     print(f"  Game:         {config.game}")
-    print(f"  State:        {config.state}")
+    print(f"  Level:        {level}  (boot state: {boot_state})")
     if config.states:
         print(f"  States:       {len(config.states)} anchors sampled per episode")
     print(f"  Envs:         {config.num_envs}")

@@ -18,7 +18,6 @@
 #     clip_fraction climbed to 0.43 (healthy <0.2) late — updates were thrashing
 
 game: Contra-Nes
-state: Level1
 name: level1_9_states_less_hp
 timesteps: 64000000
 resume:

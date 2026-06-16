@@ -515,6 +515,20 @@ def _level_events(pre_ram: np.ndarray) -> list:
     """Return the event list for the level the player was in at the start of a step."""
     return EVENTS_BY_LEVEL.get(int(pre_ram[ADDR_LEVEL]), LEVELS_PUSH_RIGHT)
 
+
+# Advancement style per level, derived from EVENTS_BY_LEVEL so this stays the
+# single source of truth for "how does the player make progress on this level".
+#   "forward" : horizontal scroll (side-scroll levels)   — EV_PUSH_FORWARD
+#   "inside"  : destroy core + walk through door + enter next room (indoor base)
+#   "up"      : vertical scroll (climbing levels)         — EV_PUSH_UP
+def level_advance_style(level_0indexed: int) -> str:
+    events = EVENTS_BY_LEVEL.get(level_0indexed, LEVELS_PUSH_RIGHT)
+    if EV_CORE_BROKEN in events:
+        return "inside"
+    if EV_PUSH_UP in events:
+        return "up"
+    return "forward"
+
 def get_level(ram: np.ndarray) -> int:
     """Return the current 1-indexed level from RAM."""
     return int(ram[ADDR_LEVEL]) + 1

@@ -1,7 +1,19 @@
-1. remove levelup reward to make the value loss stable.
-2. more game states with different guns
-    -- with 45 states, test if the train process is more stable than 9 states
+# PPO Training TODO
 
-3. less n_steps: 1024 ? a stupid model does not need to sample 1024 step to get itself killed. 512 is a better choice to learn faster
+## Done
 
-4. some game states are with very low win rate, trim them may increase learning spead
+- [x] **Remove levelup reward** to make the value loss stable.
+  - Result: `tmp/ppo/checkpoints/level1_e2_no_levelup`
+
+- [x] **More game states with different guns** — test if training is more
+  stable with 45 states than with 9 states.
+  - Result: `tmp/ppo/checkpoints/level1_e3_more_states`
+
+- [x] **Lower `n_steps` (1024 → 512)** — a weak model doesn't need 1024 steps
+  to get itself killed; 512 should learn faster.
+  - Result: did not work.
+
+## In progress
+
+- [] **Train with level 2**
+- [] **Mix train with level 1,2**
