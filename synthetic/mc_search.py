@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import glob
 import multiprocessing as mp
 import os
 import time
@@ -31,7 +32,8 @@ import numpy as np
 import stable_retro as retro
 from contra.replay import rewind_state, step_env
 from contra.action_space import DEFAULT as ACTION_SPACE
-from contra.events import compute_reward, scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR, ADDR_LEVEL_ROUTINE
+from contra.events import scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR, ADDR_LEVEL_ROUTINE
+from contra.reward import compute_reward, load as load_reward_config, DEFAULT_CONFIG
 
 # Canonical action space shared with PPO (contra/action_space.py): a win path
 # found here must be reproducible by the trained policy, so both use the same
@@ -48,6 +50,20 @@ STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'contra', 'integration
 SKIP = ACTION_SPACE.skip  # frames per decision; shared with replay.step_env and PPO
 TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
 VIDEO_DIR = os.path.join("tmp", "replay_videos")
+
+# Reward config shared with PPO (contra/reward_configs/<name>.yaml). Set per
+# search in _run_one_search before the worker pool forks, so workers inherit it.
+REWARD_CONFIG = DEFAULT_CONFIG
+
+
+def _resolve_reward_config(level: int, name: str | None):
+    """Load the named reward config, or default to level{level}_stable."""
+    name = name or f"level{level}_stable"
+    try:
+        return load_reward_config(name)
+    except FileNotFoundError:
+        print(f"WARNING: reward config '{name}' not found, using default weights.")
+        return DEFAULT_CONFIG
 
 
 @dataclass
@@ -66,7 +82,7 @@ NUM_ACTIONS = ACTION_SPACE.num_actions
 # set, so search enumerates every action. The TRIMMED_* plumbing is kept (it
 # drives the fast bigram CDF sampler) but now spans all actions.
 TRIMMED_ACTION_INDICES = np.arange(NUM_ACTIONS, dtype=np.int32)
-NUM_TRIMMED = len(TRIMMED_ACTION_INDICES)  # 21
+NUM_TRIMMED = len(TRIMMED_ACTION_INDICES)  # == NUM_ACTIONS
 
 _UNIFORM_PRIOR = np.full((NUM_ACTIONS, NUM_ACTIONS), 1.0 / NUM_ACTIONS, dtype=np.float32)
 _ACTION_PRIORS: dict[int, np.ndarray] = {}  # level (1-indexed) → bigram prior
@@ -130,26 +146,61 @@ def _worker_rollout(args: tuple) -> tuple:
     return run_random_rollout(_worker_env, emu_state, length, level)
 
 
-def _load_bigram(start_level: int) -> None:
-    """Load bigram priors for all levels >= start_level into _ACTION_PRIORS."""
-    path = os.path.join(os.path.dirname(__file__), "action_bigram.npz")
-    if not os.path.exists(path):
-        print(f"WARNING: {path} not found, using uniform random actions.")
-        return
-    data = np.load(path)
+HUMAN_REC_DIR = os.path.join(os.path.dirname(__file__), "..", "contra", "human_recordings")
+
+# The 6 meaningful NES buttons as bit indices into the 9-vector
+# [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A].
+_BUTTON_BITS  = np.array([0, 4, 5, 6, 7, 8], dtype=np.int32)
+_BUTTON_LABELS = ["B", "U", "D", "L", "R", "A"]
+
+
+def human_button_freq(level: int) -> np.ndarray:
+    """Per-button press probability (the "6-button distribution") estimated from
+    the human Level{level} recordings. Returns shape (6,) in _BUTTON_BITS order;
+    falls back to 0.5 each when no traces exist (→ a near-uniform prior)."""
+    files = glob.glob(os.path.join(HUMAN_REC_DIR, f"Level{level}", "*.npz"))
+    pressed = np.zeros(len(_BUTTON_BITS), dtype=np.float64)
+    total = 0
+    for fpath in files:
+        try:
+            actions = np.load(fpath, allow_pickle=True)["actions"]
+        except Exception as e:
+            print(f"  WARN: cannot load {fpath}: {e}")
+            continue
+        if actions.ndim != 2 or actions.shape[1] != 9:
+            continue
+        pressed += actions[:, _BUTTON_BITS].sum(axis=0)
+        total += len(actions)
+    if total == 0:
+        print(f"WARNING: no human traces for Level{level}, using p=0.5 per button.")
+        return np.full(len(_BUTTON_BITS), 0.5)
+    return pressed / total
+
+
+def button_prior_for_level(level: int) -> np.ndarray:
+    """A unigram action prior (shape (NUM_ACTIONS,)) from the human 6-button
+    distribution. Independent-Bernoulli model: an action's weight is the product
+    over the 6 buttons of (p_b if pressed else 1 - p_b), normalised over the
+    action space."""
+    p = human_button_freq(level)                            # (6,)
+    bits = _ACTIONS_NP[:, _BUTTON_BITS].astype(bool)        # (NUM_ACTIONS, 6)
+    factors = np.where(bits, p[None, :], 1.0 - p[None, :])  # p if pressed else 1-p
+    weights = factors.prod(axis=1)                          # (NUM_ACTIONS,)
+    total = weights.sum()
+    if total <= 0:
+        return np.full(NUM_ACTIONS, 1.0 / NUM_ACTIONS, dtype=np.float32)
+    return (weights / total).astype(np.float32)
+
+
+def _build_button_prior(start_level: int) -> None:
+    """Estimate human-trace button priors for all levels >= start_level into
+    _ACTION_PRIORS. The per-action unigram is broadcast across rows so the
+    existing trimmed-CDF sampler (which expects a bigram matrix) is unchanged."""
     for level in range(start_level, 9):
-        key = f"Level{level}"
-        if key in data:
-            prior = data[key]
-            if prior.shape == (NUM_ACTIONS, NUM_ACTIONS):
-                _ACTION_PRIORS[level] = prior
-                _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior + CDF
-                _TRIMMED_CDFS.pop(level, None)
-                # print(f"Loaded action bigram prior for {key}")
-            else:
-                print(f"WARNING: bigram shape {prior.shape} != ({NUM_ACTIONS},{NUM_ACTIONS}) for {key}, using uniform.")
-        else:
-            print(f"WARNING: key '{key}' not in {path}, using uniform for level {level}.")
+        unigram = button_prior_for_level(level)
+        _ACTION_PRIORS[level] = np.tile(unigram[None, :], (NUM_ACTIONS, 1))
+        _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior + CDF
+        _TRIMMED_CDFS.pop(level, None)
 
 
 def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1) -> tuple:
@@ -175,7 +226,7 @@ def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1)
             seq.append(act)
             return seq, cumulative_reward, True
 
-        cumulative_reward += compute_reward(pre_ram, curr_ram)
+        cumulative_reward += compute_reward(pre_ram, curr_ram, REWARD_CONFIG)
         seq.append(act)
 
     return seq, cumulative_reward, False
@@ -199,7 +250,7 @@ def search_and_play(env, initial_emu_state: bytes,
     rewards           = []   # [i]: cumulative_reward after committed_actions[i]
     current_level     = level
 
-    rollouts_high     = rollouts * 4
+    rollouts_high     = rollouts * 2
     current_rollouts  = rollouts
     t_start           = time.time()
     pending_events: list[str] = []
@@ -331,7 +382,7 @@ def search_and_play(env, initial_emu_state: bytes,
 
             committed_actions.append(act)
             states.append(committed.emu_state)
-            rewards.append((rewards[-1] if rewards else 0.0) + compute_reward(pre_ram, curr_ram))
+            rewards.append((rewards[-1] if rewards else 0.0) + compute_reward(pre_ram, curr_ram, REWARD_CONFIG))
 
             if committed.done:
                 break
@@ -367,11 +418,14 @@ def save_trace(initial_state_for_npz: bytes, actions: list, trace_path: str,
 
 
 def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_actions,
-                    goal, workers, verbose=False, instance_id=None):
+                    goal, workers, verbose=False, instance_id=None, reward_config=None):
     """Set up env+pool, run one full search, save trace if won. Returns trace path or None."""
     prefix = f"[i{instance_id}] " if instance_id is not None else ""
 
-    _load_bigram(level)
+    # Resolve reward config before the pool forks so workers inherit it.
+    global REWARD_CONFIG
+    REWARD_CONFIG = _resolve_reward_config(level, reward_config)
+    _build_button_prior(level)
     if instance_id is not None:
         np.random.seed((os.getpid() + instance_id * 1337) % (2**32))
 
@@ -436,7 +490,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
 def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
     parser.add_argument("--level",       type=int, default=1, choices=list(range(1, 9)))
-    parser.add_argument("--rollouts",    type=int, default=128)
+    parser.add_argument("--rollouts",    type=int, default=64)
     parser.add_argument("--rollout-len", type=int, default=48)
     parser.add_argument("--max-rewind",  type=int, default=30,
                         help="Max steps to rewind on backtrack (default: 30)")
@@ -449,9 +503,12 @@ def main():
                         help="Abandon trace if committed actions exceed this limit (default: 4000)")
     parser.add_argument("--no-verbose", action="store_true", default=False,
                         help="Suppress per-step search output")
+    parser.add_argument("--reward-config", type=str, default=None,
+                        help="Reward config name under contra/reward_configs/ "
+                             "(default: level{level}_stable)")
     args = parser.parse_args()
 
-    _load_bigram(args.level)
+    _build_button_prior(args.level)
     np.random.seed(int(time.time() * 1000) % (2**32))
 
     verbose = not args.no_verbose
@@ -462,6 +519,7 @@ def main():
         print("=" * 70)
         print(f"  Game:           {GAME}")
         print(f"  Level:          {args.level}  ({state_label})")
+        print(f"  Reward Config:  {args.reward_config or f'level{args.level}_stable'}")
         print(f"  Skip:           {SKIP}")
         print(f"  Rollouts/Step:  {args.rollouts}")
         print(f"  Rollout Length: {args.rollout_len} actions ({args.rollout_len * SKIP} frames)")
@@ -476,6 +534,7 @@ def main():
         level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
         max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
         goal=args.goal, workers=args.workers, verbose=verbose,
+        reward_config=args.reward_config,
     )
 
 

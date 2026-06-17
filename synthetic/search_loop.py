@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from mc_search import _run_one_search, _load_bigram, TRACE_DIR
+from mc_search import _run_one_search, _build_button_prior, TRACE_DIR
 
 
 def _print_summary(run: int, total_traces: int, total_time: float) -> None:
@@ -73,7 +73,7 @@ def main():
     while True:
         run  += 1
         level = args.level if args.level is not None else random.randint(1, 8)
-        _load_bigram(level)
+        _build_button_prior(level)
 
         print(f"\n{'─' * 60}")
         print(f"  Run #{run}   level: {level}")

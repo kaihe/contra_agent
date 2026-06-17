@@ -3,7 +3,7 @@ Contra (NES) PPO training with Stable-Baselines3.
 
 Usage:
     python ppo/train.py
-    python ppo/train.py --config ppo/ppo.yaml --timesteps 10000000
+    python ppo/train.py --config ppo/train_config/ppo.yaml --timesteps 10000000
     python ppo/train.py --resume tmp/ppo/checkpoints/ppo_contra/ppo_contra_final.zip
 """
 
@@ -27,7 +27,9 @@ from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
+from contra.reward import load as load_reward_config
 from contra_wrapper import (
+    ACTION_SKIP,
     DEFAULT_REWARD_WEIGHTS,
     RandomStateWrapper,
     create_env,
@@ -35,7 +37,7 @@ from contra_wrapper import (
 )
 
 
-DEFAULT_CONFIG = os.path.join(os.path.dirname(__file__), "ppo.yaml")
+DEFAULT_CONFIG = os.path.join(os.path.dirname(__file__), "train_config", "ppo.yaml")
 
 
 @dataclass(frozen=True)
@@ -55,8 +57,6 @@ class PPOConfig:
     random_start_frames: int = 0
     warmup_frames: int = 120
     max_episode_steps: int = 10000
-    enemy_hp_cap_per_region: float = 5.0
-    skip: int = 3
     stack: int = 4
 
     n_steps: int = 2048
@@ -73,6 +73,10 @@ class PPOConfig:
     # out_dir/<name>.
     out_dir: str = "tmp/ppo"
     save_freq: int = 125000
+    # Name of a reward config under contra/reward_configs/<name>.yaml. When set,
+    # it supplies reward_weights shared with mc_search, overriding any inline
+    # reward_weights block.
+    reward_config: str | None = None
     reward_weights: dict[str, float] = field(
         default_factory=lambda: DEFAULT_REWARD_WEIGHTS.copy()
     )
@@ -109,6 +113,11 @@ def _config_from_mapping(data: dict) -> PPOConfig:
             raise ValueError(f"Unknown reward weight(s): {unknown_weights}")
         weights.update(merged["reward_weights"])
         merged["reward_weights"] = weights
+    # A named reward_config takes precedence: it supplies the same reward_weights
+    # that mc_search uses, so both optimise one objective.
+    if merged.get("reward_config"):
+        rc = load_reward_config(merged["reward_config"])
+        merged["reward_weights"] = rc.reward_weights
     return PPOConfig(**merged)
 
 
@@ -164,7 +173,6 @@ class LatestCheckpointCallback(CheckpointCallback):
             if checkpoints:
                 save_config_to_model(
                     checkpoints[-1],
-                    skip=self.train_config["skip"],
                     stack=self.train_config["stack"],
                     train_config=self.train_config,
                 )
@@ -278,11 +286,9 @@ def make_env(config: PPOConfig, rank: int):
             env,
             random_start_frames=config.random_start_frames,
             warmup_frames=config.warmup_frames,
-            skip=config.skip,
             stack=config.stack,
             level=level,
             max_episode_steps=config.max_episode_steps,
-            enemy_hp_cap_per_region=config.enemy_hp_cap_per_region,
             reward_weights=config.reward_weights,
         )
         np.random.seed(config.seed + rank)
@@ -314,6 +320,7 @@ def main():
     if config.states:
         print(f"  States:       {len(config.states)} anchors sampled per episode")
     print(f"  Envs:         {config.num_envs}")
+    print(f"  Action skip:  {ACTION_SKIP}")
     print(f"  Steps to run: {config.timesteps:,}")
     print(f"  Random start: {config.random_start_frames} frames")
     print(f"  Output dir:   {exp_dir}  (checkpoints + tensorboard)")
@@ -389,7 +396,6 @@ def main():
     model.save(final_path)
     save_config_to_model(
         final_path,
-        skip=config.skip,
         stack=config.stack,
         train_config=train_config,
     )

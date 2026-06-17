@@ -2,31 +2,31 @@
 
 This directory contains the Stable-Baselines3 PPO baseline for Contra NES. The
 current design is intentionally small: one training entrypoint, one environment
-wrapper, and one YAML config file.
+wrapper, and a small set of YAML train configs.
 
 ## Quick Start
 
 From the repository root:
 
 ```bash
-python ppo/train.py --config ppo/ppo.yaml
+python ppo/train.py --config ppo/train_config/ppo.yaml
 ```
 
 Short test run:
 
 ```bash
-python ppo/train.py --config ppo/ppo.yaml --name smoke --timesteps 1000000
+python ppo/train.py --config ppo/train_config/ppo.yaml --name smoke --timesteps 1000000
 ```
 
 Resume:
 
 ```bash
-python ppo/train.py --config ppo/ppo.yaml --resume tmp/ppo/checkpoints/baseline/baseline_final.zip
+python ppo/train.py --config ppo/train_config/ppo.yaml --resume tmp/ppo/checkpoints/baseline/baseline_final.zip
 ```
 
 ## Files
 
-- `ppo.yaml` is the default training config.
+- `train_config/ppo.yaml` is the default training config.
 - `train.py` builds vectorized environments, creates or resumes the PPO model,
   attaches callbacks, and runs `model.learn()`.
 - `contra_wrapper.py` converts the raw stable-retro environment into the PPO
@@ -40,7 +40,7 @@ adds its own numeric run suffix.
 
 ## Config Flow
 
-`train.py` loads `ppo.yaml` into `PPOConfig`. CLI flags override common run
+`train.py` loads `train_config/ppo.yaml` into `PPOConfig` by default. CLI flags override common run
 fields:
 
 - `--config`
@@ -59,7 +59,7 @@ deliberate: PPO runs are expensive, so typo-driven config drift should fail
 early.
 
 Training starts from `state` by default. When the optional `states` list is set
-(see `level1_win.yaml`), each episode instead loads a uniformly sampled `.state`
+(see `train_config/level1_win.yaml`), each episode instead loads a uniformly sampled `.state`
 file from that list (multi-state training). Anchor savestates for Level 1 live
 in `ppo/states/`; they were captured during human play (chapter 9 fixed-anchor
 technique) and let episodes start mid-level and at the boss arena, removing the
@@ -97,7 +97,7 @@ Discrete(NUM_ACTIONS)
 ```
 
 Each action is one named NES button vector. The set is defined in
-`contra/action_configs/baseline.json` as a `name -> vector` map (e.g.
+`contra/action_configs/baseline.yaml` as a `name -> vector` map (e.g.
 `"RF" -> Right+Fire`) and loaded via `contra/action_space.py`. The same config
 is shared with the Monte-Carlo searcher (`synthetic/mc_search.py`) and the frame
 `skip`, so a win path found by search is reproducible by the trained policy.
@@ -282,8 +282,9 @@ frames, with two exceptions borrowed from the chapter-5 redesign:
 - The observation frame is the max-pool of the last two raw frames, which
   defeats NES sprite flicker.
 
-`ppo.yaml` (baseline) uses `skip: 3`; `level1_win.yaml` uses `skip: 8`, which
-matches the bullet cooldown and human play rhythm.
+The action list and frame skip come from `contra/action_configs/baseline.yaml`,
+not from the train configs, so PPO and Monte-Carlo search use the same
+controller timing.
 
 Player death is **not** terminal: the per-death penalty applies and the player
 respawns with remaining lives. Episodes end on level completion (`win`), true
@@ -307,12 +308,9 @@ Spread Gun and negative when the player loses it. Generic weapon pickups and
 generic rapid-fire pickups are intentionally not rewarded in PPO, because the
 Spread Gun is the weapon we most want the policy to preserve.
 
-`DEFAULT_REWARD_WEIGHTS` provides defaults, and `ppo.yaml` can override them.
+`DEFAULT_REWARD_WEIGHTS` provides defaults, and train configs can override them.
 `enemy_hp` covers regular enemies and `boss_hp` covers bosses, minibosses, and
-finite boss-objective components. `enemy_hp_cap_per_region` limits rewarded
-regular-enemy damage in each 256-pixel scroll region per episode. Boss damage is
-not capped. This bounds rewards from endlessly respawning enemies while
-preserving dense feedback during boss fights.
+finite boss-objective components.
 The wrapper emits both event counts and weighted rewards into the episode `info`
 dict:
 

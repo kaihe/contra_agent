@@ -13,8 +13,6 @@ num_envs: 16
 random_start_frames: 60
 warmup_frames: 120
 max_episode_steps: 2000
-enemy_hp_cap_per_region: 2.0
-skip: 3
 stack: 3
 
 n_steps: 1024

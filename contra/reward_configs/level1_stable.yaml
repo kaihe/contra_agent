@@ -1,0 +1,16 @@
+# Level 1 reward config — extracted from tmp/ppo/checkpoints/level1_e4_96m
+# (the 96M "level1_9_states_less_hp" run that beat level 1).
+#
+# Shared by PPO (reward_config: level1_stable in the level YAML) and mc_search
+# (--reward-config level1_stable), so both optimise one objective. Weights are
+# merged onto contra/reward.py DEFAULT_REWARD_WEIGHTS, so only the level-1
+# (forward) terms need listing here.
+
+reward_weights:
+  enemy_hp: 1.0
+  boss_hp: 1.0
+  progress: 0.1          # per xscroll pixel (forward levels)
+  spread_pick: 2.0
+  levelup: 1.0           # small: death is terminal, so future reward carries the cost
+  player_die: -15.0
+  time_out: -50.0

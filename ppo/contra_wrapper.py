@@ -10,20 +10,11 @@ import gymnasium as gym
 import numpy as np
 
 from contra.action_space import DEFAULT as ACTION_SPACE
-from contra.events import (
-    ADDR_LEVEL,
-    ADDR_XSCROLL_HI,
-    EV_BOSS_HIT,
-    EV_CORE_BROKEN,
-    EV_LEVELUP,
-    EV_PLAYER_DIE,
-    EV_PUSH_INSIDE,
-    EV_PUSH_UP,
-    EV_REGULAR_ENEMY_HIT,
-    EV_ROOM_ENTER,
-    EV_SPREAD_PICK,
-    is_gameplay,
-    level_advance_style,
+from contra.events import is_gameplay
+from contra.reward import (
+    DEFAULT_REWARD_WEIGHTS,
+    reward_components,
+    xscroll,
 )
 
 
@@ -37,23 +28,23 @@ from contra.events import (
 ACTIONS = [list(a) for a in ACTION_SPACE.actions]
 ACTION_NAMES = list(ACTION_SPACE.names)
 NUM_ACTIONS = len(ACTIONS)
+ACTION_SKIP = ACTION_SPACE.skip
 
 # Three RGB-sliced history channels: R(t), G(t-1), B(t-3).
 RGB_CHANNELS = 3
 HISTORY_OFFSETS = [0, 1, 3]
 BUFFER_FRAMES = max(HISTORY_OFFSETS) + 1
 
-ENEMY_HP_REGION_SIZE_PX = 256
-DEFAULT_ENEMY_HP_CAP_PER_REGION = 5.0
-
 
 def save_config_to_model(
     model_path: str,
-    skip: int = 3,
+    skip: int | None = None,
     stack: int = 3,
     train_config: dict | None = None,
 ) -> None:
     """Embed contra_config.json into an SB3 model .zip file."""
+    if skip is None:
+        skip = ACTION_SKIP
     config = {"actions": dict(zip(ACTION_NAMES, ACTIONS)),
               "skip": skip, "stack": stack,
               "history_offsets": HISTORY_OFFSETS}
@@ -76,17 +67,18 @@ def load_config_from_model(model_path: str) -> dict | None:
 
 def apply_config(config: dict) -> None:
     """Override the global action list with values from config."""
-    global ACTIONS, ACTION_NAMES, NUM_ACTIONS
+    global ACTIONS, ACTION_NAMES, NUM_ACTIONS, ACTION_SKIP
     actions = config["actions"]  # {name: vector}
     ACTION_NAMES = list(actions.keys())
     ACTIONS      = [list(v) for v in actions.values()]
     NUM_ACTIONS  = len(ACTIONS)
+    ACTION_SKIP  = int(config.get("skip", ACTION_SKIP))
 
 
 class Monitor:
     """Record raw RGB frames and/or display live via pygame."""
 
-    def __init__(self, width, height, saved_path=None, render=False, skip=8):
+    def __init__(self, width, height, saved_path=None, render=False, skip=ACTION_SKIP):
         self.render = render
         self.saved_path = saved_path
         self.frames = [] if saved_path else None
@@ -157,75 +149,6 @@ class RandomStateWrapper(gym.Wrapper):
         return obs, info
 
 
-def xscroll(ram: np.ndarray) -> int:
-    return int(ram[100]) << 8 | int(ram[101])
-
-
-def reward_components(
-    pre_ram: np.ndarray,
-    curr_ram: np.ndarray,
-    weights: dict[str, float],
-    prev_xscroll: int,
-    max_progress_px: float,
-    enemy_hp_event_cap: float | None = None,
-    timed_out: bool = False,
-) -> dict[str, float]:
-    """Level-aware reward components.
-
-    The combat / item / terminal components are level-agnostic. The *advancement*
-    component is selected from the level read out of RAM (ADDR_LEVEL), using the
-    same per-level advancement style as the mc_search event system:
-      "forward" : horizontal scroll progress (side-scroll levels)
-      "inside"  : core destroyed + walking through door + entering next room (indoor)
-      "up"      : vertical scroll progress (climbing levels)
-    So one wrapper supports every level — it just needs to start in the right state.
-    """
-    enemy_hp = EV_REGULAR_ENEMY_HIT.trigger(pre_ram, curr_ram)
-    if enemy_hp_event_cap is not None:
-        enemy_hp = min(enemy_hp, max(enemy_hp_event_cap, 0.0))
-
-    components = {
-        "enemy_hp": weights["enemy_hp"] * enemy_hp,
-        "boss_hp": weights["boss_hp"] * EV_BOSS_HIT.trigger(pre_ram, curr_ram),
-        "spread_pick": weights["spread_pick"] * EV_SPREAD_PICK.trigger(pre_ram, curr_ram),
-        "levelup": weights["levelup"] * EV_LEVELUP.trigger(pre_ram, curr_ram),
-        "player_die": weights["player_die"] * EV_PLAYER_DIE.trigger(pre_ram, curr_ram),
-        "time_out": weights["time_out"] * float(timed_out),
-    }
-
-    style = level_advance_style(int(pre_ram[ADDR_LEVEL]))
-    if style == "inside":
-        components["core_broken"] = weights["core_broken"] * EV_CORE_BROKEN.trigger(pre_ram, curr_ram)
-        components["push_inside"] = weights["push_inside"] * EV_PUSH_INSIDE.trigger(pre_ram, curr_ram)
-        components["room_enter"] = weights["room_enter"] * EV_ROOM_ENTER.trigger(pre_ram, curr_ram)
-    elif style == "up":
-        components["push_up"] = weights["push_up"] * EV_PUSH_UP.trigger(pre_ram, curr_ram)
-    else:  # "forward"
-        progress = float(np.clip(
-            xscroll(curr_ram) - prev_xscroll,
-            -max_progress_px,
-            max_progress_px,
-        ))
-        components["progress"] = weights["progress"] * progress
-
-    return components
-
-
-DEFAULT_REWARD_WEIGHTS = {
-    "enemy_hp": 1.0,
-    "boss_hp": 1.0,
-    "progress": 1.0 / 60.0,    # "forward" levels: per xscroll pixel
-    "core_broken": 10.0,       # "inside" levels: wall core destroyed (sparse)
-    "push_inside": 0.5,        # "inside" levels: per step walking through the door
-    "room_enter": 10.0,        # "inside" levels: entered the next indoor screen
-    "push_up": 0.5,            # "up" levels: per vertical-scroll pixel
-    "spread_pick": 20.0,
-    "levelup": 100.0,
-    "player_die": -15.0,
-    "time_out": -10.0,
-}
-
-
 class ContraWrapper(gym.Wrapper):
     """Reward shaping + frame skip + history sampling for Contra NES.
 
@@ -235,9 +158,8 @@ class ContraWrapper(gym.Wrapper):
     """
 
     def __init__(self, env, monitor=None, random_start_frames=0,
-                 warmup_frames=120, skip=3, stack=3, level=1,
+                 warmup_frames=120, skip=None, stack=3, level=1,
                  max_episode_steps=10000,
-                 enemy_hp_cap_per_region=DEFAULT_ENEMY_HP_CAP_PER_REGION,
                  reward_weights=None):
         super().__init__(env)
         weights = DEFAULT_REWARD_WEIGHTS.copy()
@@ -247,19 +169,15 @@ class ContraWrapper(gym.Wrapper):
                 raise ValueError(f"Unknown reward weight(s): {sorted(unknown)}")
             weights.update(reward_weights)
         self.reward_weights = weights
-        self.max_progress_px = 30.0
         self._no_op = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
         self._actions = np.array(ACTIONS, dtype=env.action_space.dtype)
         self.monitor = monitor
         self.random_start_frames = random_start_frames
         self.warmup_frames = warmup_frames
-        self.skip = skip
+        self.skip = ACTION_SKIP if skip is None else skip
         self.stack = stack
         self.level = level
         self.max_episode_steps = max_episode_steps
-        self.enemy_hp_cap_per_region = float(enemy_hp_cap_per_region)
-        if self.enemy_hp_cap_per_region < 0:
-            raise ValueError("enemy_hp_cap_per_region must be non-negative")
         if stack != len(HISTORY_OFFSETS):
             raise ValueError(
                 f"stack={stack} must match len(HISTORY_OFFSETS)={len(HISTORY_OFFSETS)}"
@@ -286,7 +204,6 @@ class ContraWrapper(gym.Wrapper):
             "enemy_hp_cost": 0.0,
             "end_reason": "",
         }
-        self.enemy_hp_events_by_region = {}
 
     def _get_obs(self) -> np.ndarray:
         indices = [(self._buf_pos - offset) % BUFFER_FRAMES for offset in HISTORY_OFFSETS]
@@ -303,19 +220,6 @@ class ContraWrapper(gym.Wrapper):
         # levelup resets xscroll to ~0 on the winning frame; tracking the max
         # keeps the real furthest-right position instead of that reset value.
         self.max_xscroll = max(self.max_xscroll, curr_xscroll)
-        # Region key for the anti-farming cap. On "forward" levels regions are
-        # horizontal scroll bands; on indoor/climb levels xscroll is ~flat, so
-        # key the cap on the screen/room number instead (else the whole level is
-        # one region and the cap is exhausted on the first screen).
-        if level_advance_style(int(curr_ram[ADDR_LEVEL])) == "forward":
-            enemy_hp_region = curr_xscroll // ENEMY_HP_REGION_SIZE_PX
-        else:
-            enemy_hp_region = int(curr_ram[ADDR_XSCROLL_HI])
-        enemy_hp_event_cap = max(
-            self.enemy_hp_cap_per_region
-            - self.enemy_hp_events_by_region.get(enemy_hp_region, 0.0),
-            0.0,
-        )
         timed_out = not done and self.total_timesteps >= self.max_episode_steps
 
         end_reason = ""
@@ -324,15 +228,9 @@ class ContraWrapper(gym.Wrapper):
             curr_ram,
             self.reward_weights,
             self.prev_xscroll,
-            self.max_progress_px,
-            enemy_hp_event_cap,
             timed_out,
         )
         events = self._events_from_rewards(rewards)
-        self.enemy_hp_events_by_region[enemy_hp_region] = (
-            self.enemy_hp_events_by_region.get(enemy_hp_region, 0.0)
-            + events["enemy_hp"]
-        )
 
         # Death is terminal (episodic-life trick): ending the episode makes a
         # death cost all remaining future reward, which is a far stronger
@@ -438,8 +336,7 @@ class ContraWrapper(gym.Wrapper):
 
 
 def create_env(env, monitor=None, random_start_frames=0, warmup_frames=120,
-               skip=3, stack=3, level=1, max_episode_steps=10000,
-               enemy_hp_cap_per_region=DEFAULT_ENEMY_HP_CAP_PER_REGION,
+               skip=None, stack=3, level=1, max_episode_steps=10000,
                reward_weights=None):
     """Wrap a retro env with reward shaping + frame skip + history sampling."""
     return ContraWrapper(env, monitor=monitor,
@@ -447,5 +344,4 @@ def create_env(env, monitor=None, random_start_frames=0, warmup_frames=120,
                          warmup_frames=warmup_frames,
                          skip=skip, stack=stack, level=level,
                          max_episode_steps=max_episode_steps,
-                         enemy_hp_cap_per_region=enemy_hp_cap_per_region,
                          reward_weights=reward_weights)

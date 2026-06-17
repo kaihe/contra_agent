@@ -16,20 +16,20 @@ Each action is a length-9 NES button vector in bit order
 plain ``Discrete(num_actions)``: the agent picks an index, and the vector at
 that index is the buttons held for ``skip`` frames.
 
-Config values live in JSON under ``contra/action_configs/<name>.json``; this
+Config values live in YAML under ``contra/action_configs/<name>.yaml``; this
 module only holds the dataclass and the loader. :data:`DEFAULT` is loaded from
-``baseline.json``.
+``baseline.yaml``.
 
 Note: ``contra/inputs.py`` keeps a separate, legacy two-head encoding still
 used by the bigram builder / pixel2play / annotator. This module is the
 canonical config for the mc_search<->PPO loop only.
 """
 
-import json
 import os
 from dataclasses import dataclass
 
 import numpy as np
+import yaml
 
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), "action_configs")
 
@@ -39,8 +39,8 @@ class ActionSpace:
     """A flat discrete action space (named NES button vectors) + frame skip.
 
     ``names[i]`` is the human-readable label (e.g. "RF" = Right+Fire) for the
-    button vector ``actions[i]``. Index order is the JSON insertion order, so it
-    is stable as long as baseline.json keeps its key order.
+    button vector ``actions[i]``. Index order is the YAML insertion order, so it
+    is stable as long as baseline.yaml keeps its key order.
     """
 
     names: tuple    # tuple of action names, parallel to `actions`
@@ -60,7 +60,7 @@ class ActionSpace:
         return self.actions_np(dtype)[idx]
 
     def to_dict(self) -> dict:
-        """JSON-serialisable form (used when embedding config into a model)."""
+        """Plain serialisable form (used when embedding config into a model)."""
         return {"skip": self.skip,
                 "actions": {n: list(a) for n, a in zip(self.names, self.actions)}}
 
@@ -75,12 +75,12 @@ class ActionSpace:
 
 
 def load(name: str = "baseline") -> ActionSpace:
-    """Load an action config from ``contra/action_configs/<name>.json``."""
-    path = os.path.join(CONFIG_DIR, f"{name}.json")
+    """Load an action config from ``contra/action_configs/<name>.yaml``."""
+    path = os.path.join(CONFIG_DIR, f"{name}.yaml")
     with open(path) as f:
-        return ActionSpace.from_dict(json.load(f))
+        return ActionSpace.from_dict(yaml.safe_load(f))
 
 
 # Canonical config, shared with mc_search so a searched win path is
-# policy-reproducible (see baseline.json).
+# policy-reproducible (see baseline.yaml).
 DEFAULT = load("baseline")

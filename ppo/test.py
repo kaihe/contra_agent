@@ -27,6 +27,7 @@ import stable_retro as retro
 from stable_baselines3 import PPO
 
 from contra_wrapper import (
+    ACTION_SKIP,
     Monitor,
     RandomStateWrapper,
     apply_config,
@@ -125,7 +126,7 @@ def main():
     print(f"  Model:        {model_path}  (step {_ckpt_step(model_path):,})")
     print(f"  Anchors:      {len(states)}")
     print(f"  Episodes:     {args.episodes} per anchor  ({'greedy' if args.deterministic else 'stochastic'})")
-    print(f"  skip={config.get('skip', 3)} stack={config.get('stack', 3)} "
+    print(f"  skip={config.get('skip', ACTION_SKIP)} stack={config.get('stack', 3)} "
           f"max_steps={train_config.get('max_episode_steps', 2000)}")
     print("=" * 78)
 
@@ -147,10 +148,9 @@ def main():
         rsw,
         random_start_frames=0,
         warmup_frames=train_config.get("warmup_frames", 240),
-        skip=config.get("skip", 3),
+        skip=config.get("skip", ACTION_SKIP),
         stack=config.get("stack", 3),
         max_episode_steps=train_config.get("max_episode_steps", 2000),
-        enemy_hp_cap_per_region=train_config.get("enemy_hp_cap_per_region", 5.0),
         reward_weights=train_config.get("reward_weights"),
     )
 
@@ -169,7 +169,7 @@ def main():
             monitor = Monitor(240, 224,
                               saved_path=os.path.join(GIF_DIR, f"{name}.gif"),
                               render=False)
-            monitor.skip = config.get("skip", 3)
+            monitor.skip = config.get("skip", ACTION_SKIP)
 
         ends = {"win": 0, "death": 0, "game_over": 0, "time_out": 0}
         delta_xs, hp_costs, rewards = [], [], []
