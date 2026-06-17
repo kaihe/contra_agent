@@ -30,8 +30,13 @@ warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
 import numpy as np
 import stable_retro as retro
 from contra.replay import rewind_state, step_env
-from contra.inputs import DPAD_TABLE, BUTTON_TABLE, NUM_DPAD, NUM_BUTTONS
+from contra.action_space import DEFAULT as ACTION_SPACE
 from contra.events import compute_reward, scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR, ADDR_LEVEL_ROUTINE
+
+# Canonical action space shared with PPO (contra/action_space.py): a win path
+# found here must be reproducible by the trained policy, so both use the same
+# flat action-vector list and frame skip.
+ACTION_NAMES = list(ACTION_SPACE.names)
 
 _death_ev      = EV_PLAYER_DIE
 _game_clear_ev = EV_GAME_CLEAR
@@ -40,7 +45,7 @@ _NOOP_ACTION   = np.zeros(9, dtype=np.uint8)
 GAME = "Contra-Nes"
 DEFAULT_STATE_BY_LEVEL = {i: f"Level{i}" for i in range(1, 9)}
 STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'contra', 'integration', 'Contra-Nes')
-SKIP = 3
+SKIP = ACTION_SPACE.skip  # frames per decision; shared with replay.step_env and PPO
 TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
 VIDEO_DIR = os.path.join("tmp", "replay_videos")
 
@@ -54,20 +59,13 @@ class State:
         return State(emu_state=self.emu_state, done=self.done)
 
 
-_DPAD_NP   = np.array(DPAD_TABLE,   dtype=np.uint8)
-_BUTTON_NP = np.array(BUTTON_TABLE, dtype=np.uint8)
-NUM_ACTIONS = NUM_DPAD * NUM_BUTTONS  # 28
+_ACTIONS_NP = ACTION_SPACE.actions_np()        # (NUM_ACTIONS, 9) button vectors
+NUM_ACTIONS = ACTION_SPACE.num_actions
 
-# Trimmed action space: drop diagonal d-pad (DL, DR) and Fire+Jump combo.
-# Dpad  : _, L, R, U, D, UL, UR  (indices 0-6; drop DL=7, DR=8)
-# Button: _, J, F                 (indices 0-2; drop FJ=3)
-# Total : 7 × 3 = 21 actions
-_TRIMMED_DPAD    = [0, 1, 2, 3, 4, 5, 6]
-_TRIMMED_BUTTONS = [0, 1, 2]
-TRIMMED_ACTION_INDICES = np.array(
-    [d * NUM_BUTTONS + b for d in _TRIMMED_DPAD for b in _TRIMMED_BUTTONS],
-    dtype=np.int32,
-)
+# The canonical action space (contra/action_space.py) is already the curated
+# set, so search enumerates every action. The TRIMMED_* plumbing is kept (it
+# drives the fast bigram CDF sampler) but now spans all actions.
+TRIMMED_ACTION_INDICES = np.arange(NUM_ACTIONS, dtype=np.int32)
 NUM_TRIMMED = len(TRIMMED_ACTION_INDICES)  # 21
 
 _UNIFORM_PRIOR = np.full((NUM_ACTIONS, NUM_ACTIONS), 1.0 / NUM_ACTIONS, dtype=np.float32)
@@ -167,7 +165,7 @@ def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1)
     for i in range(length):
         t = int(np.searchsorted(trimmed_cdf[prev_idx], rands[i + 1]))
         prev_idx = TRIMMED_ACTION_INDICES[min(t, NUM_TRIMMED - 1)]
-        act = (_DPAD_NP[prev_idx // NUM_BUTTONS] | _BUTTON_NP[prev_idx % NUM_BUTTONS]).copy()
+        act = _ACTIONS_NP[prev_idx].copy()
 
         pre_ram = env.unwrapped.get_ram().copy()
         step_env(env, act)
@@ -350,7 +348,7 @@ def search_and_play(env, initial_emu_state: bytes,
     return committed_actions, committed, rewards, total_sampled_actions
 
 
-FPS = 20  # logical fps = 60 NES fps / SKIP
+FPS = round(60 / SKIP)  # logical fps = 60 NES fps / SKIP
 
 
 def save_trace(initial_state_for_npz: bytes, actions: list, trace_path: str,

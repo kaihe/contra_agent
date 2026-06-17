@@ -90,26 +90,18 @@ rollout  = 16 * 512 = 8192 environment steps per PPO update
 
 ## Actions
 
-The wrapper exposes a two-head action space:
+The wrapper exposes a flat discrete action space:
 
 ```text
-MultiDiscrete([7, 4])
+Discrete(NUM_ACTIONS)
 ```
 
-The first head selects D-pad intent:
-
-```text
-_, R, L, U, D, UR, DR
-```
-
-The second head selects button intent:
-
-```text
-_, Fire, Jump, Fire+Jump
-```
-
-The two selected NES button rows are OR-ed together before stepping the emulator.
-This keeps movement and fire/jump factored while still allowing run-and-gun.
+Each action is one named NES button vector. The set is defined in
+`contra/action_configs/baseline.json` as a `name -> vector` map (e.g.
+`"RF" -> Right+Fire`) and loaded via `contra/action_space.py`. The same config
+is shared with the Monte-Carlo searcher (`synthetic/mc_search.py`) and the frame
+`skip`, so a win path found by search is reproducible by the trained policy.
+The agent picks an index; the wrapper holds that vector for `skip` frames.
 
 ## Observations
 
@@ -190,13 +182,11 @@ shared NatureCNN features
 Because the action space is:
 
 ```text
-MultiDiscrete([7, 4])
+Discrete(NUM_ACTIONS)
 ```
 
-the policy distribution is a multi-categorical distribution: one categorical
-choice for the D-pad head and one categorical choice for the button head. The
-sampled pair is later combined by `ContraWrapper` into a single NES button
-vector.
+the policy distribution is a single categorical over the flat action list. The
+sampled index is mapped by `ContraWrapper` to its NES button vector.
 
 The value head outputs one scalar:
 

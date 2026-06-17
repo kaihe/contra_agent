@@ -9,6 +9,7 @@ import cv2
 import gymnasium as gym
 import numpy as np
 
+from contra.action_space import DEFAULT as ACTION_SPACE
 from contra.events import (
     ADDR_LEVEL,
     ADDR_XSCROLL_HI,
@@ -28,32 +29,14 @@ from contra.events import (
 
 # NES buttons: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
 #
-# Two-head action space: agent outputs (dpad_idx, button_idx) independently.
-# The NES action is the bitwise OR of the two selected rows.
-
-# Head 1 — D-pad (7 options)
-DPAD_TABLE = [
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: none
-    [0, 0, 0, 0, 0, 0, 0, 1, 0],  # 1: Right
-    [0, 0, 0, 0, 0, 0, 1, 0, 0],  # 2: Left
-    [0, 0, 0, 0, 1, 0, 0, 0, 0],  # 3: Up
-    [0, 0, 0, 0, 0, 1, 0, 0, 0],  # 4: Down
-    [0, 0, 0, 0, 1, 0, 0, 1, 0],  # 5: Up+Right
-    [0, 0, 0, 0, 0, 1, 0, 1, 0],  # 6: Down+Right
-]
-DPAD_NAMES = ["_", "R", "L", "U", "D", "UR", "DR"]
-
-# Head 2 — Buttons (4 options)
-BUTTON_TABLE = [
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],  # 0: none
-    [1, 0, 0, 0, 0, 0, 0, 0, 0],  # 1: Fire (B)
-    [0, 0, 0, 0, 0, 0, 0, 0, 1],  # 2: Jump (A)
-    [1, 0, 0, 0, 0, 0, 0, 0, 1],  # 3: Fire+Jump
-]
-BUTTON_NAMES = ["_", "F", "J", "FJ"]
-
-NUM_DPAD    = len(DPAD_TABLE)
-NUM_BUTTONS = len(BUTTON_TABLE)
+# Flat discrete action space: each action is a length-9 NES button vector and
+# the agent picks an index (gym Discrete). The action list + frame skip live in
+# contra/action_space.py so mc_search and PPO share one canonical action space.
+# Mirrored into module globals because apply_config() may override them at
+# load time (a model can embed the exact actions it was trained with).
+ACTIONS = [list(a) for a in ACTION_SPACE.actions]
+ACTION_NAMES = list(ACTION_SPACE.names)
+NUM_ACTIONS = len(ACTIONS)
 
 # Three RGB-sliced history channels: R(t), G(t-1), B(t-3).
 RGB_CHANNELS = 3
@@ -71,8 +54,7 @@ def save_config_to_model(
     train_config: dict | None = None,
 ) -> None:
     """Embed contra_config.json into an SB3 model .zip file."""
-    config = {"dpad_table": DPAD_TABLE, "dpad_names": DPAD_NAMES,
-              "button_table": BUTTON_TABLE, "button_names": BUTTON_NAMES,
+    config = {"actions": dict(zip(ACTION_NAMES, ACTIONS)),
               "skip": skip, "stack": stack,
               "history_offsets": HISTORY_OFFSETS}
     if train_config is not None:
@@ -93,14 +75,12 @@ def load_config_from_model(model_path: str) -> dict | None:
 
 
 def apply_config(config: dict) -> None:
-    """Override the global action tables with values from config."""
-    global DPAD_TABLE, DPAD_NAMES, BUTTON_TABLE, BUTTON_NAMES, NUM_DPAD, NUM_BUTTONS
-    DPAD_TABLE   = config["dpad_table"]
-    DPAD_NAMES   = config["dpad_names"]
-    BUTTON_TABLE = config["button_table"]
-    BUTTON_NAMES = config["button_names"]
-    NUM_DPAD     = len(DPAD_TABLE)
-    NUM_BUTTONS  = len(BUTTON_TABLE)
+    """Override the global action list with values from config."""
+    global ACTIONS, ACTION_NAMES, NUM_ACTIONS
+    actions = config["actions"]  # {name: vector}
+    ACTION_NAMES = list(actions.keys())
+    ACTIONS      = [list(v) for v in actions.values()]
+    NUM_ACTIONS  = len(ACTIONS)
 
 
 class Monitor:
@@ -251,7 +231,7 @@ class ContraWrapper(gym.Wrapper):
 
     Observation: (84, 84, stack) uint8 channels-last for SB3 CnnPolicy.
                  Channels are R(t), G(t-1), B(t-3).
-    Actions:     MultiDiscrete([7, 4]) — (dpad_idx, button_idx) combined via OR.
+    Actions:     Discrete(NUM_ACTIONS) — index into the flat ACTIONS vector list.
     """
 
     def __init__(self, env, monitor=None, random_start_frames=0,
@@ -269,8 +249,7 @@ class ContraWrapper(gym.Wrapper):
         self.reward_weights = weights
         self.max_progress_px = 30.0
         self._no_op = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
-        self._dpad_table   = np.array(DPAD_TABLE,   dtype=env.action_space.dtype)
-        self._button_table = np.array(BUTTON_TABLE, dtype=env.action_space.dtype)
+        self._actions = np.array(ACTIONS, dtype=env.action_space.dtype)
         self.monitor = monitor
         self.random_start_frames = random_start_frames
         self.warmup_frames = warmup_frames
@@ -286,7 +265,7 @@ class ContraWrapper(gym.Wrapper):
                 f"stack={stack} must match len(HISTORY_OFFSETS)={len(HISTORY_OFFSETS)}"
             )
 
-        self.action_space = gym.spaces.MultiDiscrete([NUM_DPAD, NUM_BUTTONS])
+        self.action_space = gym.spaces.Discrete(NUM_ACTIONS)
         # Small ring buffer for recent RGB 84×84 frames.
         self._buf = np.zeros((BUFFER_FRAMES, 84, 84, RGB_CHANNELS), dtype=np.uint8)
         self._buf_pos = 0
@@ -420,17 +399,12 @@ class ContraWrapper(gym.Wrapper):
         return self._get_obs(), info
 
     def step(self, action):
-        nes_action = self._dpad_table[action[0]] | self._button_table[action[1]]
+        nes_action = self._actions[int(action)]
         done = False
         states = []
 
         for i in range(self.skip):
             act = nes_action
-            # Release B on the last skip frame so auto-fire retriggers next
-            # step (holding B fires only once — the "B-stuck" bug).
-            if i == self.skip - 1 and act[0]:
-                act = act.copy()
-                act[0] = 0
             state, _, term, trunc, info = self.env.step(act)
             if self.monitor:
                 self.monitor.record(state)

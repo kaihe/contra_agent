@@ -45,12 +45,14 @@ from contra.events import (
 )
 import stable_retro as retro
 
+from contra.action_space import DEFAULT as ACTION_SPACE
+
 _levelup_ev = EV_LEVELUP
 _hit_events = (EV_REGULAR_ENEMY_HIT, EV_BOSS_HIT)
 
 GAME = "Contra-Nes"
-SKIP = 3
-FPS  = 20   # logical fps (= 60 NES fps / SKIP)
+SKIP = ACTION_SPACE.skip  # frames per decision; shared with mc_search and PPO
+FPS  = round(60 / SKIP)   # logical fps (= 60 NES fps / SKIP)
 
 
 def rewind_state(env, emu_state: bytes) -> None:
