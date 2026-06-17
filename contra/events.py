@@ -49,6 +49,8 @@ ADDR_WALL_CORE_LEFT = 0x86   # |u1   WALL_CORE_REMAINING
 ADDR_XSCROLL_HI     = 0x64   # |u1   LEVEL_SCREEN_NUMBER (indoor/vertical screen index)
 ADDR_SCROLL_OFF     = 0x65   # |u1   LEVEL_SCREEN_SCROLL_OFFSET: pixels scrolled within current screen (0→0xEF); wraps at 0xF0=240
 ADDR_PLAYER_ADV     = 0xd0   # |u1   INDOOR_PLAYER_ADV_FLAG: set when player starts walking through door
+ADDR_LEVEL_STOP_SCROLL = 0x58  # |u1   LEVEL_STOP_SCROLL: level-length screen index during
+                               #       play; set to 0xff once the boss-reveal auto-scroll starts
 ADDR_LEVEL_ROUTINE  = 0x2c   # |u1   LEVEL_ROUTINE_INDEX (from ram.asm $2c)
                               #       0x04 = active gameplay
                               #       0x08-0x09 = post-boss transition (end-of-level tune/sequence)
@@ -233,6 +235,39 @@ def _boss_hit_trigger(pre: np.ndarray, cur: np.ndarray) -> float:
     )
 
 
+def _boss_enemy_present(ram: np.ndarray) -> bool:
+    """True when a boss enemy type currently occupies an active enemy slot."""
+    level = int(ram[ADDR_LEVEL])
+    for slot in range(ADDR_ENEMY_HP_COUNT):
+        etype = int(ram[ADDR_ENEMY_TYPE + slot])
+        hp    = int(ram[ADDR_ENEMY_HP   + slot])
+        if hp >= 0xf0:                # inactive / empty slot
+            continue
+        if _is_boss_enemy_type(level, etype):
+            return True
+    return False
+
+
+def _boss_scene(ram: np.ndarray) -> bool:
+    """True during an end-of-level boss fight.
+
+    Scrolling levels: the game sets LEVEL_STOP_SCROLL ($58) to 0xff when the
+    boss-reveal auto-scroll begins (set_boss_auto_scroll in bank7.asm) and leaves
+    it there through the fight. During normal play $58 holds the level length, so
+    this cleanly excludes mid-level minibosses (e.g. the snow-field Tank/Alien
+    Carrier on L5, which "appear randomly" and are not the stage boss).
+
+    Indoor base levels (L2/L4) don't auto-scroll to reveal a boss, so fall back to
+    boss-enemy presence — there the boss types (Boss Eye/Core) only spawn in the
+    final room.
+    """
+    if int(ram[ADDR_LEVEL_STOP_SCROLL]) == 0xff:
+        return True
+    if level_advance_style(int(ram[ADDR_LEVEL])) == "inside":
+        return _boss_enemy_present(ram)
+    return False
+
+
 def _enemy_hit_detail(pre: np.ndarray, cur: np.ndarray, boss: bool | None = None) -> str:
     parts = [
         f"{enemy_type_name(etype, level)} -{delta}HP"
@@ -266,6 +301,16 @@ EV_BOSS_HIT = ContraEvent(
     trigger_fn=_boss_hit_trigger,
     detail_fn=lambda pre, cur: _enemy_hit_detail(pre, cur, boss=True),
     weight=1.0,
+)
+
+
+EV_BOSS_STAGE = ContraEvent(
+    tag="BOSS_STAGE",
+    desc="Player just engaged the end-of-level boss fight (boss-reveal auto-scroll "
+         "started, or boss room entered on indoor levels).",
+    trigger_fn=lambda pre, cur: 1.0 if (_boss_scene(cur) and not _boss_scene(pre)) else 0.0,
+    weight=0.0,
+    important=True,
 )
 
 
@@ -487,6 +532,7 @@ LEVELS_BASE = [
     EV_GUN_PICKUP,
     EV_GUN_POWERUP,
     EV_LEVELUP,
+    EV_BOSS_STAGE,
 ]
 
 LEVELS_PUSH_RIGHT  = [*LEVELS_BASE, EV_PUSH_FORWARD]

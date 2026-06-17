@@ -5,15 +5,8 @@
 # the advancement style (events.level_advance_style). Level 2 is "inside", so
 # the horizontal `progress` term is replaced by core_broken / room_enter /
 # push_inside.
-# Weight design follows the level1_e2_no_levelup finding: keep every event in the
-# same small scale as the dense shaping rewards; sparse + large + terminal spikes
-# (e.g. levelup=100) wreck the value function. Measured on a winning trace, the
-# three DENSE signals are push_inside (RAM 0xd0 active ~22% of every corridor
-# room — the real continuous progress signal, the L2 analog of L1's push_forward),
-# boss_hp (cores are boss-typed, so core damage is dense per-hit, ~89), and
-# enemy_hp. The SPARSE events (core_broken 5x, room_enter 5x, levelup 1x)
-# are kept tiny or off so they never become value-function hazards. Advancement
-# (push_inside ~83 + boss ~89 + room ~5) still dominates farming.
+# Reward weights live in contra/reward_configs/stable.yaml so PPO and
+# mc_search optimise the same objective.
 
 game: Contra-Nes
 name: level2_baseline
@@ -47,13 +40,4 @@ save_freq: 62500
 states:
   - ppo/states/level2_*.state
 
-reward_weights:
-  push_inside: 1.0     # DENSE primary progress (~83 steps/win)
-  boss_hp: 1.0         # DENSE core + boss-eye damage (~89); the room-clear signal
-  enemy_hp: 1.0        # DENSE regular enemy damage
-  room_enter: 1.0      # sparse but tiny per-room milestone (~5)
-  core_broken: 0.0     # sparse spike; redundant with boss_hp (core is boss-typed)
-  spread_pick: 2.0
-  levelup: 1.0         # keep small (e2 finding: a +100 win spike breaks the critic)
-  player_die: -15.0
-  time_out: -50.0
+reward_config: stable

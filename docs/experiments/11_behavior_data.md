@@ -28,14 +28,6 @@ Chapter 10 showed that the Monte Carlo search in `synthetic/mc_search.py` can be
 
 So we ran the search as a factory. Each invocation stops at a level-up (`--goal level_up`), saves the committed action sequence to an NPZ, and starts over from a fresh random seed. Run that loop across all eight levels for a couple of weeks of spare machine time and you accumulate a library of independent win traces.
 
-The result, in `synthetic/mc_trace/`:
-
-| Level | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | **Total** |
-|---|---|---|---|---|---|---|---|---|---|
-| Win traces | 1716 | 897 | 679 | 923 | 821 | 881 | 934 | 870 | **7721** |
-
-Level 1 is over-represented because it is the cheapest to search and was used to shake out the pipeline; Level 3 (the vertical waterfall climb) is the rarest because it is the hardest corridor and the slowest to solve.
-
 ## Statistics of the Win Traces
 
 The length of each trace — the number of committed steps from level start to level-up. One step is `SKIP = 3` NES frames, so 20 steps ≈ 1 second of game time. Measured across all 7721 traces:

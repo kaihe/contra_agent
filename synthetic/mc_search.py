@@ -19,7 +19,6 @@ Usage:
 """
 
 import argparse
-import glob
 import multiprocessing as mp
 import os
 import time
@@ -52,13 +51,13 @@ TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
 VIDEO_DIR = os.path.join("tmp", "replay_videos")
 
 # Reward config shared with PPO (contra/reward_configs/<name>.yaml). Set per
-# search in _run_one_search before the worker pool forks, so workers inherit it.
+# search in _run_one_search and explicitly loaded by worker processes.
 REWARD_CONFIG = DEFAULT_CONFIG
 
 
 def _resolve_reward_config(level: int, name: str | None):
-    """Load the named reward config, or default to level{level}_stable."""
-    name = name or f"level{level}_stable"
+    """Load the named reward config, or default to the shared 'stable' config."""
+    name = name or "stable"
     try:
         return load_reward_config(name)
     except FileNotFoundError:
@@ -96,7 +95,7 @@ _TRIMMED_CDFS: dict[int, np.ndarray] = {}   # level → (NUM_ACTIONS, NUM_TRIMME
 
 
 def _build_trimmed_prior(full_prior: np.ndarray) -> np.ndarray:
-    """Extract and renormalise trimmed columns from a full (28,28) prior."""
+    """Extract and renormalise searchable action columns from a prior matrix."""
     sub = full_prior[:, TRIMMED_ACTION_INDICES].astype(np.float64)
     row_sums = sub.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1.0
@@ -119,14 +118,106 @@ def _get_trimmed_cdf(level: int) -> np.ndarray:
     return _TRIMMED_CDFS[level]
 
 
+def _old_bigram_index(nes: np.ndarray) -> int:
+    """Map a 9-button NES vector to the old 36-action bigram index.
+
+    ``synthetic/action_bigram.npz`` was built before the action-space config was
+    flattened. Its rows/columns are ordered as 9 d-pad states x 4 button states:
+    [_, L, R, U, D, UL, UR, DL, DR] x [_, J, F, FJ].
+    """
+    up, down, left, right = bool(nes[4]), bool(nes[5]), bool(nes[6]), bool(nes[7])
+    fire, jump = bool(nes[0]), bool(nes[8])
+
+    if up and left:
+        dpad = 5
+    elif up and right:
+        dpad = 6
+    elif down and left:
+        dpad = 7
+    elif down and right:
+        dpad = 8
+    elif left:
+        dpad = 1
+    elif right:
+        dpad = 2
+    elif up:
+        dpad = 3
+    elif down:
+        dpad = 4
+    else:
+        dpad = 0
+
+    if fire and jump:
+        buttons = 3
+    elif jump:
+        buttons = 1
+    elif fire:
+        buttons = 2
+    else:
+        buttons = 0
+
+    return dpad * 4 + buttons
+
+
+_OLD_BIGRAM_INDICES = np.array([_old_bigram_index(a) for a in _ACTIONS_NP], dtype=np.int32)
+
+
+def _normalise_rows(matrix: np.ndarray) -> np.ndarray:
+    row_sums = matrix.sum(axis=1, keepdims=True).astype(np.float64)
+    fallback = np.full_like(matrix, 1.0 / matrix.shape[1], dtype=np.float64)
+    return np.where(row_sums > 0, matrix / row_sums, fallback).astype(np.float32)
+
+
+def _map_bigram_to_action_space(prior: np.ndarray) -> np.ndarray | None:
+    """Convert an old 36x36 bigram or current NxN prior into current action order."""
+    if prior.shape == (NUM_ACTIONS, NUM_ACTIONS):
+        return _normalise_rows(prior.astype(np.float64))
+    if prior.shape == (36, 36):
+        mapped = prior[np.ix_(_OLD_BIGRAM_INDICES, _OLD_BIGRAM_INDICES)]
+        return _normalise_rows(mapped.astype(np.float64))
+    return None
+
+
+def _load_bigram(start_level: int) -> None:
+    """Load level bigram priors, mapping legacy 36x36 matrices to current actions."""
+    path = os.path.join(os.path.dirname(__file__), "action_bigram.npz")
+    if not os.path.exists(path):
+        print(f"WARNING: {path} not found, using uniform random actions.")
+        return
+
+    data = np.load(path)
+    for level in range(start_level, 9):
+        key = f"Level{level}"
+        if key not in data:
+            print(f"WARNING: key '{key}' not in {path}, using uniform for level {level}.")
+            continue
+        prior = _map_bigram_to_action_space(data[key])
+        if prior is None:
+            print(
+                f"WARNING: bigram shape {data[key].shape} cannot map to "
+                f"({NUM_ACTIONS},{NUM_ACTIONS}) for {key}, using uniform."
+            )
+            continue
+        _ACTION_PRIORS[level] = prior
+        _TRIMMED_PRIORS.pop(level, None)
+        _TRIMMED_CDFS.pop(level, None)
+
+
 # ── Parallel rollout worker ────────────────────────────────────────────────────
 
 _worker_env = None
 
-def _worker_init(game: str, state_label: str, use_spread: bool) -> None:
-    global _worker_env
+def _worker_init(game: str, state_label: str, use_spread: bool,
+                 reward_config_name: str, start_level: int) -> None:
+    global _worker_env, REWARD_CONFIG
     import warnings
     warnings.filterwarnings("ignore", message=".*Gym.*")
+    REWARD_CONFIG = (
+        DEFAULT_CONFIG
+        if reward_config_name == DEFAULT_CONFIG.name
+        else load_reward_config(reward_config_name)
+    )
+    _load_bigram(start_level)
     np.random.seed(os.getpid() % (2 ** 32))
     _worker_env = retro.make(
         game=game, state=retro.State.NONE if use_spread else state_label,
@@ -144,63 +235,6 @@ def _worker_init(game: str, state_label: str, use_spread: bool) -> None:
 def _worker_rollout(args: tuple) -> tuple:
     emu_state, length, level = args
     return run_random_rollout(_worker_env, emu_state, length, level)
-
-
-HUMAN_REC_DIR = os.path.join(os.path.dirname(__file__), "..", "contra", "human_recordings")
-
-# The 6 meaningful NES buttons as bit indices into the 9-vector
-# [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A].
-_BUTTON_BITS  = np.array([0, 4, 5, 6, 7, 8], dtype=np.int32)
-_BUTTON_LABELS = ["B", "U", "D", "L", "R", "A"]
-
-
-def human_button_freq(level: int) -> np.ndarray:
-    """Per-button press probability (the "6-button distribution") estimated from
-    the human Level{level} recordings. Returns shape (6,) in _BUTTON_BITS order;
-    falls back to 0.5 each when no traces exist (→ a near-uniform prior)."""
-    files = glob.glob(os.path.join(HUMAN_REC_DIR, f"Level{level}", "*.npz"))
-    pressed = np.zeros(len(_BUTTON_BITS), dtype=np.float64)
-    total = 0
-    for fpath in files:
-        try:
-            actions = np.load(fpath, allow_pickle=True)["actions"]
-        except Exception as e:
-            print(f"  WARN: cannot load {fpath}: {e}")
-            continue
-        if actions.ndim != 2 or actions.shape[1] != 9:
-            continue
-        pressed += actions[:, _BUTTON_BITS].sum(axis=0)
-        total += len(actions)
-    if total == 0:
-        print(f"WARNING: no human traces for Level{level}, using p=0.5 per button.")
-        return np.full(len(_BUTTON_BITS), 0.5)
-    return pressed / total
-
-
-def button_prior_for_level(level: int) -> np.ndarray:
-    """A unigram action prior (shape (NUM_ACTIONS,)) from the human 6-button
-    distribution. Independent-Bernoulli model: an action's weight is the product
-    over the 6 buttons of (p_b if pressed else 1 - p_b), normalised over the
-    action space."""
-    p = human_button_freq(level)                            # (6,)
-    bits = _ACTIONS_NP[:, _BUTTON_BITS].astype(bool)        # (NUM_ACTIONS, 6)
-    factors = np.where(bits, p[None, :], 1.0 - p[None, :])  # p if pressed else 1-p
-    weights = factors.prod(axis=1)                          # (NUM_ACTIONS,)
-    total = weights.sum()
-    if total <= 0:
-        return np.full(NUM_ACTIONS, 1.0 / NUM_ACTIONS, dtype=np.float32)
-    return (weights / total).astype(np.float32)
-
-
-def _build_button_prior(start_level: int) -> None:
-    """Estimate human-trace button priors for all levels >= start_level into
-    _ACTION_PRIORS. The per-action unigram is broadcast across rows so the
-    existing trimmed-CDF sampler (which expects a bigram matrix) is unchanged."""
-    for level in range(start_level, 9):
-        unigram = button_prior_for_level(level)
-        _ACTION_PRIORS[level] = np.tile(unigram[None, :], (NUM_ACTIONS, 1))
-        _TRIMMED_PRIORS.pop(level, None)  # invalidate cached trimmed prior + CDF
-        _TRIMMED_CDFS.pop(level, None)
 
 
 def run_random_rollout(env, start_emu_state: bytes, length: int, level: int = 1) -> tuple:
@@ -422,10 +456,11 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     """Set up env+pool, run one full search, save trace if won. Returns trace path or None."""
     prefix = f"[i{instance_id}] " if instance_id is not None else ""
 
-    # Resolve reward config before the pool forks so workers inherit it.
+    # Resolve reward config in the parent and pass its name to workers so this
+    # is robust under both fork and spawn multiprocessing modes.
     global REWARD_CONFIG
     REWARD_CONFIG = _resolve_reward_config(level, reward_config)
-    _build_button_prior(level)
+    _load_bigram(level)
     if instance_id is not None:
         np.random.seed((os.getpid() + instance_id * 1337) % (2**32))
 
@@ -433,7 +468,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     use_spread  = level > 1
 
     pool = mp.Pool(workers, initializer=_worker_init,
-                   initargs=(GAME, state_label, use_spread)) if workers > 1 else None
+                   initargs=(GAME, state_label, use_spread, REWARD_CONFIG.name, level)) if workers > 1 else None
     env = retro.make(
         game=GAME, state=retro.State.NONE if use_spread else state_label,
         use_restricted_actions=retro.Actions.ALL,
@@ -499,16 +534,16 @@ def main():
     parser.add_argument("--goal",        type=str, default="level_up",
                         choices=["level_up", "game_clear"],
                         help="level_up: stop on level-up (default); game_clear: stop on game clear")
-    parser.add_argument("--max-actions", type=int, default=4000,
-                        help="Abandon trace if committed actions exceed this limit (default: 4000)")
+    parser.add_argument("--max-actions", type=int, default=6000,
+                        help="Abandon trace if committed actions exceed this limit (default: 6000)")
     parser.add_argument("--no-verbose", action="store_true", default=False,
                         help="Suppress per-step search output")
     parser.add_argument("--reward-config", type=str, default=None,
                         help="Reward config name under contra/reward_configs/ "
-                             "(default: level{level}_stable)")
+                             "(default: stable)")
     args = parser.parse_args()
 
-    _build_button_prior(args.level)
+    _load_bigram(args.level)
     np.random.seed(int(time.time() * 1000) % (2**32))
 
     verbose = not args.no_verbose
@@ -519,7 +554,7 @@ def main():
         print("=" * 70)
         print(f"  Game:           {GAME}")
         print(f"  Level:          {args.level}  ({state_label})")
-        print(f"  Reward Config:  {args.reward_config or f'level{args.level}_stable'}")
+        print(f"  Reward Config:  {args.reward_config or 'stable'}")
         print(f"  Skip:           {SKIP}")
         print(f"  Rollouts/Step:  {args.rollouts}")
         print(f"  Rollout Length: {args.rollout_len} actions ({args.rollout_len * SKIP} frames)")

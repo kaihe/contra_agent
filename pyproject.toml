@@ -6,7 +6,25 @@ build-backend = "setuptools.build_meta"
 name = "contra"
 version = "0.1.0"
 requires-python = ">=3.10"
+# Runtime deps imported by the contra/ and synthetic/ packages. Floors match the
+# versions currently in the vllm-env conda environment.
+dependencies = [
+    "numpy>=1.26",
+    "pygame>=2.6",
+    "PyYAML>=6.0",
+    "stable-retro>=0.9.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["contra*", "synthetic*", "annotate*", "pixel2play*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: long-running search/integration tests (opt-in via -m slow)",
+]

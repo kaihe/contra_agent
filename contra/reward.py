@@ -27,6 +27,7 @@ from contra.events import (
     ADDR_XSCROLL_HI,
     EV_BOSS_HIT,
     EV_CORE_BROKEN,
+    EV_GUN_POWERUP,
     EV_LEVELUP,
     EV_PLAYER_DIE,
     EV_PUSH_INSIDE,
@@ -48,6 +49,7 @@ DEFAULT_REWARD_WEIGHTS = {
     "room_enter": 10.0,        # "inside" levels: entered the next indoor screen
     "push_up": 0.5,            # "up" levels: per vertical-scroll pixel
     "spread_pick": 20.0,
+    "rapid_fire": 10.0,        # gained the rapid-fire flag via a pickup
     "levelup": 100.0,
     "player_die": -15.0,
     "time_out": -10.0,
@@ -79,6 +81,7 @@ def reward_components(
         "enemy_hp": weights["enemy_hp"] * EV_REGULAR_ENEMY_HIT.trigger(pre_ram, curr_ram),
         "boss_hp": weights["boss_hp"] * EV_BOSS_HIT.trigger(pre_ram, curr_ram),
         "spread_pick": weights["spread_pick"] * EV_SPREAD_PICK.trigger(pre_ram, curr_ram),
+        "rapid_fire": weights["rapid_fire"] * EV_GUN_POWERUP.trigger(pre_ram, curr_ram),
         "levelup": weights["levelup"] * EV_LEVELUP.trigger(pre_ram, curr_ram),
         "player_die": weights["player_die"] * EV_PLAYER_DIE.trigger(pre_ram, curr_ram),
         "time_out": weights["time_out"] * float(timed_out),

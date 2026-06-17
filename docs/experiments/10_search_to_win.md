@@ -64,7 +64,7 @@ The committed prefix, the emulator snapshot at each step, and the cumulative rew
 
 ## The Action Bigram Prior
 
-Pure uniform-random button mashing is functional but wasteful. Many action transitions are physically nonsensical — switching direction mid-jump, mashing fire while climbing a ladder — and human players never produce them. Chapter 8's human recordings let us build a **bigram prior**: a 28×28 matrix where entry `[i, j]` holds the empirical probability of action `j` following action `i` in human play.
+Pure uniform-random button mashing is functional but wasteful. Many action transitions are physically nonsensical — switching direction mid-jump, mashing fire while climbing a ladder — and human players never produce them. Chapter 8's human recordings let us build a **bigram prior**: a 21×21 matrix (one row/column per action in the curated `baseline.yaml` set) where entry `[i, j]` holds the empirical probability of action `j` following action `i` in human play.
 
 Critically, the right prior is different for each level. Contra's eight levels span three fundamentally different layouts:
 
@@ -82,25 +82,36 @@ prev_idx = int(np.random.choice(ALL_ACTIONS, p=prior[prev_idx]))
 
 The prior is stored in `synthetic/action_bigram.npz` with one matrix per level. If the file is absent the search falls back to uniform sampling — it still works, just slower.
 
+## A Shared Action Space and Frame Skip
+
+Running the search across all eight levels surfaced something useful beyond the winning traces themselves: a single action space and frame-skip setting that is the most efficient configuration for finding a win path everywhere. It is checked in as [`contra/action_configs/baseline.yaml`](../../contra/action_configs/baseline.yaml).
+
+Two choices matter:
+
+- **A curated 21-action set.** Rather than enumerate all 2⁹ raw NES button combinations, the search uses the 21 directional + jump/fire combinations that actually do anything in Contra — the eight directions, each with optional jump or fire, plus the no-op. This is small enough that even uniform sampling explores meaningfully, yet expressive enough to clear every level.
+- **`skip = 3`.** Each decision is held for three NES frames. This was the sweet spot: short enough that the agent retains fine control for boss dodging and platforming, long enough that a rollout of `L` actions covers enough game time to make Monte Carlo lookahead worthwhile. Larger skips lose precision on the hard sections; smaller skips waste search budget re-deciding identical actions.
+
+Crucially, **this same setup should be optimal for PPO too.** Search and RL are solving the same underlying control problem — same emulator, same levels, same physics — and an action space and time resolution that make the win path *findable* by random search are exactly what make it *learnable* by a policy gradient. A coarser action space throws away reachable behaviors; a finer one inflates the policy's branching factor for no benefit. By having both `mc_search` and PPO load `baseline.yaml`, the win paths discovered by search are reproducible by the trained policy by construction, and we avoid silently optimizing two different problems.
+
 ## Running It
 
 ```bash
-python synthetic/mc_search.py --level 1 --rollouts 512 --rollout-len 48 --patience 8 --max-time 600
+python synthetic/mc_search.py --level 1 --rollouts 64 --rollout-len 48 --max-rewind 30 --max-time 600 --max-actions 6000
 ```
 
 Key parameters:
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `--rollouts` | 512 | Rollouts per step |
+| `--rollouts` | 64 | Rollouts per step |
 | `--rollout-len` | 48 | Actions per rollout (~2.4 s of game time) |
-| `--patience` | 8 | Stale commits before rewind |
 | `--max-rewind` | 30 | Max steps to undo on backtrack |
+| `--max-actions` | 6000 | Abandon the trace if committed actions exceed this |
 | `--workers` | all CPUs | Parallel worker processes |
 | `--goal` | `level_up` | `level_up` stops at level transition; `game_clear` runs to the end |
-| `--resume` | — | Path to a `.npz` trace to continue from |
+| `--reward-config` | `stable` | Reward config under `contra/reward_configs/` |
 
-The parameters above — rollout count, patience, rewind range — are admittedly ad hoc. They are almost certainly not optimal. But on a 32-core laptop, every level falls within about a minute of search time, which is more than fast enough.
+The parameters above — rollout count, rewind range, action budget — are admittedly ad hoc. They are almost certainly not optimal. But on a 32-core laptop, every level falls within about a minute of search time, which is more than fast enough.
 
 Here is the search agent clearing Level 6. It moves with an almost casual confidence — smooth, unhurried, and completely effortless-looking.
 

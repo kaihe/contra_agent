@@ -17,8 +17,8 @@
 #     clip_fraction climbed to 0.43 (healthy <0.2) late — updates were thrashing
 
 game: Contra-Nes
-name: level1_e5_96m_skip4
-timesteps: 64000000
+name: level1_e5_128m_skip4
+timesteps: 128000000
 resume:
 seed: 0
 device: cuda
@@ -49,6 +49,6 @@ states:
   - ppo/states/level1_*.state
 
 # Reward weights now come from a shared reward config
-# (contra/reward_configs/level1_stable.yaml), so mc_search and PPO optimise the
+# (contra/reward_configs/stable.yaml), so mc_search and PPO optimise the
 # same objective. See that file for the per-weight rationale.
-reward_config: level1_stable
+reward_config: stable
