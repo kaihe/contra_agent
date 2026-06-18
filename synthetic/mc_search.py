@@ -539,6 +539,39 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     return trace_path
 
 
+def generate_traces(level, n, *, rollouts=64, rollout_len=48, max_time=600,
+                    max_rewind=30, max_actions=6000, goal="level_up",
+                    workers=None, reward_config=None, max_attempts=None):
+    """Generate `n` winning traces for `level`, looping the search in one process.
+
+    Each search opens and closes its own env+pool before the next starts (one
+    emulator per process), and saves with a second-resolution, instance-suffixed
+    filename so same-minute wins never overwrite. Stops after `n` wins or
+    `max_attempts` searches (default 3*n). Returns the list of saved trace paths.
+    """
+    if workers is None:
+        workers = os.cpu_count()
+    if max_attempts is None:
+        max_attempts = n * 3
+
+    paths = []
+    attempts = 0
+    while len(paths) < n and attempts < max_attempts:
+        path = _run_one_search(
+            level=level, rollouts=rollouts, rollout_len=rollout_len,
+            max_time=max_time, max_rewind=max_rewind, max_actions=max_actions,
+            goal=goal, workers=workers, verbose=False,
+            instance_id=attempts, reward_config=reward_config,
+        )
+        attempts += 1
+        if path:
+            paths.append(path)
+            print(f"progress: {len(paths)}/{n} wins  (attempt {attempts})", flush=True)
+
+    print(f"\nDone: {len(paths)}/{n} winning traces in {attempts} attempts.", flush=True)
+    return paths
+
+
 def main():
     parser = argparse.ArgumentParser(description="Playfun Monte Carlo Search")
     parser.add_argument("--level",       type=int, default=1, choices=list(range(1, 9)))
@@ -594,27 +627,14 @@ def main():
         )
         return
 
-    # Multi-run: loop in this single process until `runs` wins are collected.
-    # Each search opens its own env+pool and closes them before the next starts,
-    # so the one-emulator-per-process rule holds. instance_id gives second-
-    # resolution, suffixed filenames so same-minute wins never overwrite. Each
-    # run logs concise "[iN] ..." lines, so suppress per-step output here.
-    wins = 0
-    attempts = 0
-    max_attempts = args.runs * 3
-    while wins < args.runs and attempts < max_attempts:
-        path = _run_one_search(
-            level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
-            max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
-            goal=args.goal, workers=args.workers, verbose=False,
-            instance_id=attempts, reward_config=args.reward_config,
-        )
-        attempts += 1
-        if path:
-            wins += 1
-            print(f"progress: {wins}/{args.runs} wins  (attempt {attempts})", flush=True)
-
-    print(f"\nDone: {wins}/{args.runs} winning traces in {attempts} attempts.", flush=True)
+    # Multi-run: each search logs concise "[iN] ..." lines, so per-step output
+    # is suppressed inside generate_traces.
+    generate_traces(
+        args.level, args.runs,
+        rollouts=args.rollouts, rollout_len=args.rollout_len, max_time=args.max_time,
+        max_rewind=args.max_rewind, max_actions=args.max_actions, goal=args.goal,
+        workers=args.workers, reward_config=args.reward_config,
+    )
 
 
 if __name__ == "__main__":
