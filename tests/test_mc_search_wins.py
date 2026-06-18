@@ -16,6 +16,7 @@ temp dir so the run does not litter `synthetic/mc_trace/`.
 
 import os
 
+import numpy as np
 import pytest
 
 from synthetic import mc_search
@@ -30,6 +31,49 @@ DEFAULT_BUDGET = dict(
     goal="level_up",
     workers=os.cpu_count(),
 )
+
+
+def test_save_trace_persists_search_effort(tmp_path):
+    trace_path = tmp_path / "win_level1_test.npz"
+    effort = mc_search.SearchEffort(
+        sampled_actions=12345,
+        search_wall_s=67.5,
+        search_steps=40,
+        final_reward=12.25,
+    )
+    actions = [np.zeros(9, dtype=np.uint8) for _ in range(3)]
+
+    mc_search.save_trace(
+        b"\x01\x02\x03",
+        actions,
+        str(trace_path),
+        level=1,
+        effort=effort,
+        rollouts=64,
+        rollout_len=48,
+        max_time=600,
+        max_rewind=30,
+        max_actions=6000,
+        goal="level_up",
+        workers=8,
+        reward_config="stable",
+    )
+
+    with np.load(trace_path) as trace:
+        assert int(trace["sampled_actions"]) == 12345
+        assert float(trace["search_wall_s"]) == pytest.approx(67.5)
+        assert int(trace["search_steps"]) == 40
+        assert int(trace["trace_steps"]) == 3
+        assert float(trace["final_reward"]) == pytest.approx(12.25)
+        assert int(trace["skip"]) == mc_search.SKIP
+        assert int(trace["rollouts"]) == 64
+        assert int(trace["rollout_len"]) == 48
+        assert int(trace["max_time"]) == 600
+        assert int(trace["max_rewind"]) == 30
+        assert int(trace["max_actions"]) == 6000
+        assert str(trace["goal"]) == "level_up"
+        assert int(trace["workers"]) == 8
+        assert str(trace["reward_config"]) == "stable"
 
 
 @pytest.mark.slow

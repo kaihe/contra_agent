@@ -82,6 +82,14 @@ class State:
         return State(emu_state=self.emu_state, done=self.done)
 
 
+@dataclass
+class SearchEffort:
+    sampled_actions: int = 0
+    search_wall_s: float = 0.0
+    search_steps: int = 0
+    final_reward: float = 0.0
+
+
 _ACTIONS_NP = ACTION_SPACE.actions_np()        # (NUM_ACTIONS, 9) button vectors
 NUM_ACTIONS = ACTION_SPACE.num_actions
 
@@ -438,22 +446,47 @@ def search_and_play(env, initial_emu_state: bytes,
             print(f"  {step_num:4d}  {current_reward:7.1f}  {death_rate:5.2f}  {current_rollouts:5d}  {elapsed:6.1f}s  {ev_col}")
             pending_events.clear()
 
-    return committed_actions, committed, rewards, total_sampled_actions
+    effort = SearchEffort(
+        sampled_actions=total_sampled_actions,
+        search_wall_s=time.time() - t_start,
+        search_steps=len(committed_actions),
+        final_reward=rewards[-1] if rewards else 0.0,
+    )
+    return committed_actions, committed, rewards, effort
 
 
 FPS = round(60 / SKIP)  # logical fps = 60 NES fps / SKIP
 
 
 def save_trace(initial_state_for_npz: bytes, actions: list, trace_path: str,
-               level: int = 1) -> None:
+               level: int = 1, effort: SearchEffort | None = None,
+               *, rollouts: int | None = None, rollout_len: int | None = None,
+               max_time: int | None = None, max_rewind: int | None = None,
+               max_actions: int | None = None, goal: str | None = None,
+               workers: int | None = None, reward_config: str | None = None) -> None:
     """Save a winning trace to NPZ."""
 
     os.makedirs(os.path.dirname(trace_path), exist_ok=True)
+    effort = effort or SearchEffort(search_steps=len(actions))
 
     np.savez_compressed(trace_path,
         actions=np.array(actions, dtype=np.uint8),
         initial_state=np.frombuffer(initial_state_for_npz, dtype=np.uint8),
-        level=f"Level{level}", outcome="win", fps=FPS
+        level=f"Level{level}", outcome="win", fps=FPS,
+        skip=np.array(SKIP, dtype=np.int32),
+        sampled_actions=np.array(effort.sampled_actions, dtype=np.int64),
+        search_wall_s=np.array(effort.search_wall_s, dtype=np.float64),
+        search_steps=np.array(effort.search_steps, dtype=np.int64),
+        trace_steps=np.array(len(actions), dtype=np.int64),
+        final_reward=np.array(effort.final_reward, dtype=np.float32),
+        rollouts=np.array(-1 if rollouts is None else rollouts, dtype=np.int32),
+        rollout_len=np.array(-1 if rollout_len is None else rollout_len, dtype=np.int32),
+        max_time=np.array(-1 if max_time is None else max_time, dtype=np.int32),
+        max_rewind=np.array(-1 if max_rewind is None else max_rewind, dtype=np.int32),
+        max_actions=np.array(-1 if max_actions is None else max_actions, dtype=np.int32),
+        goal=np.array("" if goal is None else goal),
+        workers=np.array(-1 if workers is None else workers, dtype=np.int32),
+        reward_config=np.array("" if reward_config is None else reward_config),
     )
 
     print(f"Trace saved to: {trace_path}")
@@ -495,7 +528,7 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     if prefix:
         print(f"{prefix}start  level={level}  workers={workers}", flush=True)
 
-    actions, final_state, rewards, total_sampled_actions = search_and_play(
+    actions, final_state, rewards, effort = search_and_play(
         env, initial_emu_state,
         rollouts=rollouts, rollout_len=rollout_len, max_time=max_time,
         level=level, max_rewind=max_rewind, max_actions=max_actions,
@@ -511,7 +544,8 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
         print(f"\n{'=' * 70}\nRESULT\n{'=' * 70}")
         print(f"  Actions: {len(actions)}")
         print(f"  Reward:  {rewards[-1] if rewards else 0.0:.2f}")
-        print(f"  Sampled: {total_sampled_actions}")
+        print(f"  Sampled: {effort.sampled_actions}")
+        print(f"  Search:  {effort.search_wall_s:.1f}s")
 
     if not final_state.done:
         if prefix:
@@ -532,10 +566,15 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
     date_str   = time.strftime("%Y%m%d%H%M%S" if instance_id is not None else "%Y%m%d%H%M")
     level_tag  = "game" if goal == "game_clear" else f"level{level}"
     trace_path = os.path.join(TRACE_DIR, f"level{level}", f"win_{level_tag}_{date_str}{suffix}.npz")
-    save_trace(initial_state_for_npz, actions, trace_path, level=level)
+    save_trace(
+        initial_state_for_npz, actions, trace_path, level=level, effort=effort,
+        rollouts=rollouts, rollout_len=rollout_len, max_time=max_time,
+        max_rewind=max_rewind, max_actions=max_actions, goal=goal,
+        workers=workers, reward_config=REWARD_CONFIG.name,
+    )
     if prefix:
         reward_str = f"{rewards[-1]:.1f}" if rewards else "0.0"
-        print(f"{prefix}WIN   steps={len(actions)}  reward={reward_str}  sampled={total_sampled_actions}  → {trace_path}", flush=True)
+        print(f"{prefix}WIN   steps={len(actions)}  reward={reward_str}  sampled={effort.sampled_actions}  → {trace_path}", flush=True)
     return trace_path
 
 
