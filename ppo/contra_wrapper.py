@@ -202,6 +202,7 @@ class ContraWrapper(gym.Wrapper):
         self.ep = {
             "reward": 0.0,
             "enemy_hp_cost": 0.0,
+            "core_broken": 0.0,
             "end_reason": "",
         }
 
@@ -317,6 +318,7 @@ class ContraWrapper(gym.Wrapper):
 
         self.ep["reward"] += reward
         self.ep["enemy_hp_cost"] += events["enemy_hp"]
+        self.ep["core_broken"] += events.get("core_broken", 0.0)
 
         # Max-pool the last two raw frames to defeat NES sprite flicker.
         pooled = np.maximum.reduce(states[-2:])
@@ -327,12 +329,18 @@ class ContraWrapper(gym.Wrapper):
             info.update({
                 "episode_delta_x": self.max_xscroll - self.episode_start_x,
                 "episode_enemy_hp_cost": self.ep["enemy_hp_cost"],
+                "episode_core_broken": self.ep["core_broken"],
                 "episode_reward": self.ep["reward"],
                 "episode_end_reason": self.ep["end_reason"],
                 "episode_steps":    self.total_timesteps,
             })
 
-        return self._get_obs(), reward, done, False, info
+        # The step cap is an artificial cutoff, not an MDP terminal: report it as
+        # truncation so PPO bootstraps V(s') instead of zeroing the future. Death
+        # /win/game_over are real terminals.
+        truncated = done and self.ep["end_reason"] == "time_out"
+        terminated = done and not truncated
+        return self._get_obs(), reward, terminated, truncated, info
 
 
 def create_env(env, monitor=None, random_start_frames=0, warmup_frames=120,

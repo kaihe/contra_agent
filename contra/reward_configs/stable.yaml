@@ -22,7 +22,10 @@ reward_weights:
   # terminal (level-agnostic)
   levelup: 1.0           # keep small; large terminal spikes hurt the critic
   player_die: -15.0
-  time_out: -50.0
+  time_out: 0.0           # timeout is an artificial cutoff, not a failure: the
+                          # wrapper reports it as truncated (bootstrapped), so it
+                          # carries no penalty. The cap exists only to recycle
+                          # stuck/non-progressing envs and re-sample anchors.
 
   # advancement — only the level's own style term is applied
   progress: 0.1          # "forward": per xscroll pixel

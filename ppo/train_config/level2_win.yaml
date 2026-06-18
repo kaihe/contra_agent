@@ -9,7 +9,7 @@
 # mc_search optimise the same objective.
 
 game: Contra-Nes
-name: level2_baseline
+name: level2_e1_baseline
 timesteps: 96000000
 resume:
 seed: 0
@@ -18,7 +18,7 @@ device: cuda
 num_envs: 16
 random_start_frames: 0
 warmup_frames: 240
-max_episode_steps: 1500   # full x0 traverse is ~646 steps; leaves margin for the boss
+max_episode_steps: 4000
 stack: 3
 
 n_steps: 1024

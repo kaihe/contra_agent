@@ -34,6 +34,14 @@ from contra.action_space import DEFAULT as ACTION_SPACE
 from contra.events import scan_events, get_level, EV_PLAYER_DIE, EV_GAME_CLEAR, ADDR_LEVEL_ROUTINE
 from contra.reward import compute_reward, load as load_reward_config, DEFAULT_CONFIG
 
+# Pruning is applied to every winning trace before it is saved. Support both
+# invocation styles: `python -m synthetic.mc_search` / pytest (repo root on
+# path) and `python synthetic/mc_search.py` (only synthetic/ on path).
+try:
+    from synthetic.prune_actions import prune_actions, verify_level_up
+except ImportError:
+    from prune_actions import prune_actions, verify_level_up
+
 # Canonical action space shared with PPO (contra/action_space.py): a win path
 # found here must be reproducible by the trained policy, so both use the same
 # flat action-vector list and frame skip.
@@ -47,7 +55,7 @@ GAME = "Contra-Nes"
 DEFAULT_STATE_BY_LEVEL = {i: f"Level{i}" for i in range(1, 9)}
 STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'contra', 'integration', 'Contra-Nes')
 SKIP = ACTION_SPACE.skip  # frames per decision; shared with replay.step_env and PPO
-TRACE_DIR = os.path.join(os.path.dirname(__file__), "mc_trace")
+TRACE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tmp", "mc_trace")
 VIDEO_DIR = os.path.join("tmp", "replay_videos")
 
 # Reward config shared with PPO (contra/reward_configs/<name>.yaml). Set per
@@ -511,10 +519,19 @@ def _run_one_search(level, rollouts, rollout_len, max_time, max_rewind, max_acti
             print(f"{prefix}no win  steps={len(actions)}  reward={reward_str}", flush=True)
         return None
 
+    # Prune ineffective button presses, then verify the pruned trace still
+    # clears the level. The search env is already closed above, so prune/verify
+    # each open and close their own env (one emulator per process).
+    pruned = prune_actions(actions, initial_state_for_npz, verbose=verbose)
+    if verify_level_up(pruned, initial_state_for_npz, label=f"{prefix}pruned", verbose=verbose):
+        actions = pruned
+    else:
+        print(f"{prefix}prune verification failed — saving unpruned trace", flush=True)
+
     suffix     = f"_i{instance_id}" if instance_id is not None else ""
     date_str   = time.strftime("%Y%m%d%H%M%S" if instance_id is not None else "%Y%m%d%H%M")
     level_tag  = "game" if goal == "game_clear" else f"level{level}"
-    trace_path = os.path.join(TRACE_DIR, f"win_{level_tag}_{date_str}{suffix}.npz")
+    trace_path = os.path.join(TRACE_DIR, f"level{level}", f"win_{level_tag}_{date_str}{suffix}.npz")
     save_trace(initial_state_for_npz, actions, trace_path, level=level)
     if prefix:
         reward_str = f"{rewards[-1]:.1f}" if rewards else "0.0"
@@ -538,6 +555,9 @@ def main():
                         help="Abandon trace if committed actions exceed this limit (default: 6000)")
     parser.add_argument("--no-verbose", action="store_true", default=False,
                         help="Suppress per-step search output")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Number of winning traces to generate; loops the "
+                             "search until this many wins are collected (default: 1)")
     parser.add_argument("--reward-config", type=str, default=None,
                         help="Reward config name under contra/reward_configs/ "
                              "(default: stable)")
@@ -565,12 +585,36 @@ def main():
         print(f"  Time Budget:    {args.max_time}s")
         print("=" * 70)
 
-    _run_one_search(
-        level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
-        max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
-        goal=args.goal, workers=args.workers, verbose=verbose,
-        reward_config=args.reward_config,
-    )
+    if args.runs <= 1:
+        _run_one_search(
+            level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
+            max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
+            goal=args.goal, workers=args.workers, verbose=verbose,
+            reward_config=args.reward_config,
+        )
+        return
+
+    # Multi-run: loop in this single process until `runs` wins are collected.
+    # Each search opens its own env+pool and closes them before the next starts,
+    # so the one-emulator-per-process rule holds. instance_id gives second-
+    # resolution, suffixed filenames so same-minute wins never overwrite. Each
+    # run logs concise "[iN] ..." lines, so suppress per-step output here.
+    wins = 0
+    attempts = 0
+    max_attempts = args.runs * 3
+    while wins < args.runs and attempts < max_attempts:
+        path = _run_one_search(
+            level=args.level, rollouts=args.rollouts, rollout_len=args.rollout_len,
+            max_time=args.max_time, max_rewind=args.max_rewind, max_actions=args.max_actions,
+            goal=args.goal, workers=args.workers, verbose=False,
+            instance_id=attempts, reward_config=args.reward_config,
+        )
+        attempts += 1
+        if path:
+            wins += 1
+            print(f"progress: {wins}/{args.runs} wins  (attempt {attempts})", flush=True)
+
+    print(f"\nDone: {wins}/{args.runs} winning traces in {attempts} attempts.", flush=True)
 
 
 if __name__ == "__main__":

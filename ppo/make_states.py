@@ -17,10 +17,13 @@ The progress coordinate is level-aware (same source of truth as the reward):
 The level is read from RAM, so the same code handles every level — point it at
 the right traces and it picks the right coordinate automatically.
 
+Anchors are generated from a single win trace per level (the most recent one
+under tmp/mc_trace/level<N>/, or an explicit --trace).
+
 Usage:
-    python ppo/make_states.py --dry-run                 # level 1 defaults, preview
-    python ppo/make_states.py --level 2                 # auto-pick level-2 traces
-    python ppo/make_states.py --traces a.npz b.npz      # custom trace list
+    python ppo/make_states.py --dry-run            # level 1, newest trace, preview
+    python ppo/make_states.py --level 3            # level-3 anchors from newest trace
+    python ppo/make_states.py --trace a.npz        # explicit trace
 """
 import argparse
 import glob
@@ -40,20 +43,8 @@ from contra_wrapper import xscroll  # noqa: E402
 
 GAME = "Contra-Nes"
 SKIP = 3                       # traces were recorded at 60/3 = 20 fps
-TRACE_DIR = "synthetic/mc_trace"
+TRACE_DIR = "tmp/mc_trace"     # mc_search writes win_level<N>_*.npz under TRACE_DIR/level<N>/
 OUT_DIR = "ppo/states"
-
-# Curated default trace lists per level (varied recording sessions). Levels not
-# listed here fall back to evenly sampling `--num-traces` from all win traces.
-DEFAULT_TRACES_BY_LEVEL = {
-    1: [
-        "win_level1_202603301145.npz",
-        "win_level1_202603301703.npz",
-        "win_level1_202604021858.npz",
-        "win_level1_202604081140.npz",
-        "win_level1_202604081539.npz",
-    ],
-}
 
 
 def progress_coord(ram, style):
@@ -152,34 +143,36 @@ def gen_anchors(trace_path, n_anchors, drop_last, out_dir, dry_run):
     return saved
 
 
-def resolve_traces(args):
-    """Return the list of trace paths to process."""
-    if args.traces:
-        traces = args.traces
+def resolve_trace(args):
+    """Return the single trace path to process.
+
+    Uses --trace when given (a path, or a basename resolved under
+    TRACE_DIR/level<N>/), otherwise auto-picks the most recent win trace for
+    --level under TRACE_DIR/level<N>/.
+    """
+    if args.trace:
+        path = args.trace
+        if os.path.sep not in path:
+            path = os.path.join(TRACE_DIR, f"level{args.level}", path)
     else:
-        traces = DEFAULT_TRACES_BY_LEVEL.get(args.level)
-        if traces is None:
-            pool = sorted(glob.glob(os.path.join(TRACE_DIR, f"win_level{args.level}_*.npz")))
-            if not pool:
-                raise SystemExit(f"No traces found for level {args.level} in {TRACE_DIR}/")
-            picks = sorted(set(np.linspace(0, len(pool) - 1, args.num_traces).astype(int).tolist()))
-            traces = [pool[i] for i in picks]
-    traces = [t if os.path.sep in t else os.path.join(TRACE_DIR, t) for t in traces]
-    for t in traces:
-        if not os.path.isfile(t):
-            raise FileNotFoundError(t)
-    return traces
+        pool = sorted(glob.glob(
+            os.path.join(TRACE_DIR, f"level{args.level}", f"win_level{args.level}_*.npz")))
+        if not pool:
+            raise SystemExit(
+                f"No traces found for level {args.level} in {TRACE_DIR}/level{args.level}/")
+        path = pool[-1]  # most recent timestamp
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    return path
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--level", type=int, default=1,
-                   help="Level to pick default traces for (ignored if --traces given)")
-    p.add_argument("--num-traces", type=int, default=5,
-                   help="How many traces to sample when no curated default exists")
-    p.add_argument("--traces", nargs="+", default=None,
-                   help="Trace npz paths or basenames (overrides --level selection)")
+                   help="Level whose newest trace to use (ignored if --trace given)")
+    p.add_argument("--trace", default=None,
+                   help="Trace npz path or basename (overrides --level auto-pick)")
     p.add_argument("--n-anchors", type=int, default=10,
                    help="Anchors sampled per trace before dropping the last")
     p.add_argument("--keep-last", action="store_true",
@@ -189,15 +182,13 @@ def main():
                    help="Print sampled positions without writing files")
     args = p.parse_args()
 
-    traces = resolve_traces(args)
+    trace = resolve_trace(args)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    total = 0
-    for t in traces:
-        total += len(gen_anchors(t, args.n_anchors, not args.keep_last,
-                                 args.out_dir, args.dry_run))
+    total = len(gen_anchors(trace, args.n_anchors, not args.keep_last,
+                            args.out_dir, args.dry_run))
     verb = "would write" if args.dry_run else "wrote"
-    print(f"\n{verb} {total} anchors from {len(traces)} traces to {args.out_dir}/")
+    print(f"\n{verb} {total} anchors from {os.path.basename(trace)} to {args.out_dir}/")
 
 
 if __name__ == "__main__":
