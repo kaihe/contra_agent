@@ -60,6 +60,24 @@ def xscroll(ram: np.ndarray) -> int:
     return int(ram[100]) << 8 | int(ram[101])
 
 
+def progress_coord(ram: np.ndarray) -> int:
+    """Level-aware progress coordinate: a monotone scalar for "how far the player
+    has advanced", selected by the same per-level advancement style as the reward's
+    progress component (so it's the single source of truth for progress):
+
+      "forward" : horizontal scroll position (pixels)        — side-scroll levels
+      "inside"  : screen/room number (ADDR_XSCROLL_HI)       — indoor base levels
+      "up"      : screen number (ADDR_XSCROLL_HI)            — climbing levels
+
+    Unlike a raw xscroll read, this stays meaningful on indoor/climb levels where
+    horizontal scroll barely moves. Track its high-water mark across an episode to
+    get total progress.
+    """
+    if level_advance_style(int(ram[ADDR_LEVEL])) == "forward":
+        return xscroll(ram)
+    return int(ram[ADDR_XSCROLL_HI])  # screen/room number for indoor & climb
+
+
 def reward_components(
     pre_ram: np.ndarray,
     curr_ram: np.ndarray,

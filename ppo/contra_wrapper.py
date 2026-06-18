@@ -13,6 +13,7 @@ from contra.action_space import DEFAULT as ACTION_SPACE
 from contra.events import is_gameplay
 from contra.reward import (
     DEFAULT_REWARD_WEIGHTS,
+    progress_coord,
     reward_components,
     xscroll,
 )
@@ -193,8 +194,8 @@ class ContraWrapper(gym.Wrapper):
 
         self.prev_ram = np.zeros(2048, dtype=np.uint8)
         self.prev_xscroll = 0
-        self.max_xscroll = 0
-        self.episode_start_x = 0
+        self.max_progress = 0
+        self.episode_start_progress = 0
         self.total_timesteps = 0
         self._reset_episode_stats()
 
@@ -217,10 +218,11 @@ class ContraWrapper(gym.Wrapper):
     def _compute_rewards(self, info, done):
         curr_ram = self.unwrapped.get_ram()
         curr_xscroll = xscroll(curr_ram)
-        # High-water mark of progress. Used for episode_delta_x because a
-        # levelup resets xscroll to ~0 on the winning frame; tracking the max
-        # keeps the real furthest-right position instead of that reset value.
-        self.max_xscroll = max(self.max_xscroll, curr_xscroll)
+        # High-water mark of progress (level-aware: xscroll on side-scroll levels,
+        # screen/room number indoors & climbing). Used for episode_progress because
+        # a levelup resets the coordinate to ~0 on the winning frame; tracking the
+        # max keeps the real furthest position instead of that reset value.
+        self.max_progress = max(self.max_progress, progress_coord(curr_ram))
         timed_out = not done and self.total_timesteps >= self.max_episode_steps
 
         end_reason = ""
@@ -289,8 +291,8 @@ class ContraWrapper(gym.Wrapper):
         ram = self.unwrapped.get_ram()
         self.prev_ram = ram.copy()
         self.prev_xscroll = xscroll(ram)
-        self.max_xscroll = self.prev_xscroll
-        self.episode_start_x = self.prev_xscroll
+        self.max_progress = progress_coord(ram)
+        self.episode_start_progress = self.max_progress
 
         self._buf[:] = process_frame(observation)
         self._buf_pos = 0
@@ -327,7 +329,7 @@ class ContraWrapper(gym.Wrapper):
 
         if done:
             info.update({
-                "episode_delta_x": self.max_xscroll - self.episode_start_x,
+                "episode_progress": self.max_progress - self.episode_start_progress,
                 "episode_enemy_hp_cost": self.ep["enemy_hp_cost"],
                 "episode_core_broken": self.ep["core_broken"],
                 "episode_reward": self.ep["reward"],

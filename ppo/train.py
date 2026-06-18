@@ -201,15 +201,15 @@ class TensorboardCallback(BaseCallback):
 
     def __init__(self, verbose=0):
         super().__init__(verbose)
-        self.episode_delta_x = []
+        self.episode_progress = []
         self.episode_enemy_hp_cost = []
         self.episode_rewards = []
         self.episode_wins = []
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
-            if "episode_delta_x" in info:
-                self.episode_delta_x.append(info["episode_delta_x"])
+            if "episode_progress" in info:
+                self.episode_progress.append(info["episode_progress"])
                 self.episode_enemy_hp_cost.append(
                     info.get("episode_enemy_hp_cost", 0.0)
                 )
@@ -218,8 +218,8 @@ class TensorboardCallback(BaseCallback):
                     1.0 if info.get("episode_end_reason") == "win" else 0.0
                 )
 
-        if len(self.episode_delta_x) >= 100:
-            self.logger.record("contra/mean_delta_x", float(np.mean(self.episode_delta_x)))
+        if len(self.episode_progress) >= 100:
+            self.logger.record("contra/mean_progress", float(np.mean(self.episode_progress)))
             self.logger.record(
                 "contra/mean_enemy_hp_cost",
                 float(np.mean(self.episode_enemy_hp_cost)),
@@ -227,7 +227,7 @@ class TensorboardCallback(BaseCallback):
             self.logger.record("contra/mean_reward", float(np.mean(self.episode_rewards)))
             self.logger.record("contra/win_rate", float(np.mean(self.episode_wins)))
 
-            self.episode_delta_x = []
+            self.episode_progress = []
             self.episode_enemy_hp_cost = []
             self.episode_rewards = []
             self.episode_wins = []

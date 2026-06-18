@@ -3,7 +3,8 @@ Contra (NES) checkpoint evaluation
 ==================================
 
 Evaluate a trained model across the Level 1 anchor states, reporting per-state
-delta x, enemy HP cost, episode reward, and game result.
+progress (level-aware: xscroll pixels on side-scroll levels, screen/room number
+indoors & climbing), enemy HP cost, episode reward, and game result.
 
 Usage:
     # Newest level1_win checkpoint, anchors embedded in the model, 10 eps each
@@ -83,7 +84,7 @@ def run_episode(env, model, deterministic: bool):
         obs, _, terminated, truncated, info = env.step(action)
         done = terminated or truncated
     return {
-        "delta_x": info.get("episode_delta_x", 0),
+        "progress": info.get("episode_progress", 0),
         "enemy_hp_cost": info.get("episode_enemy_hp_cost", 0.0),
         "reward": info.get("episode_reward", 0.0),
         "steps": info.get("episode_steps", 0),
@@ -156,7 +157,7 @@ def main():
 
     os.makedirs(GIF_DIR, exist_ok=True)
     header = (f"{'anchor':<34}{'win':>5}{'die':>5}{'over':>5}{'tout':>5}"
-              f"{'dx(mean)':>10}{'dx(max)':>9}{'hp':>8}{'reward':>9}")
+              f"{'prog(mean)':>10}{'prog(max)':>9}{'hp':>8}{'reward':>9}")
     rows = []
     overall = {"win": 0, "death": 0, "game_over": 0, "time_out": 0, "n": 0}
 
@@ -172,12 +173,12 @@ def main():
             monitor.skip = config.get("skip", ACTION_SKIP)
 
         ends = {"win": 0, "death": 0, "game_over": 0, "time_out": 0}
-        delta_xs, hp_costs, rewards = [], [], []
+        progresses, hp_costs, rewards = [], [], []
         for ep in range(args.episodes):
             env.monitor = monitor if (monitor and ep == 0) else None
             r = run_episode(env, model, args.deterministic)
             ends[r["end"]] = ends.get(r["end"], 0) + 1
-            delta_xs.append(r["delta_x"])
+            progresses.append(r["progress"])
             hp_costs.append(r["enemy_hp_cost"])
             rewards.append(r["reward"])
         if monitor:
@@ -190,7 +191,7 @@ def main():
 
         rows.append(
             f"{name:<34}{ends['win']:>5}{ends['death']:>5}{ends['game_over']:>5}{ends['time_out']:>5}"
-            f"{np.mean(delta_xs):>10.0f}{np.max(delta_xs):>9.0f}"
+            f"{np.mean(progresses):>10.0f}{np.max(progresses):>9.0f}"
             f"{np.mean(hp_costs):>8.1f}{np.mean(rewards):>9.1f}"
         )
 

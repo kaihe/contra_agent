@@ -30,28 +30,18 @@ import glob
 import gzip
 import os
 import re
-import sys
 
 import numpy as np
 
 import contra  # noqa: F401  registers the custom ROM integration
 import stable_retro as retro
-from contra.events import ADDR_LEVEL, ADDR_XSCROLL_HI, level_advance_style
-
-sys.path.insert(0, os.path.dirname(__file__))
-from contra_wrapper import xscroll  # noqa: E402
+from contra.events import ADDR_LEVEL, level_advance_style
+from contra.reward import progress_coord
 
 GAME = "Contra-Nes"
 SKIP = 3                       # traces were recorded at 60/3 = 20 fps
 TRACE_DIR = "tmp/mc_trace"     # mc_search writes win_level<N>_*.npz under TRACE_DIR/level<N>/
 OUT_DIR = "ppo/states"
-
-
-def progress_coord(ram, style):
-    """Level-aware progress coordinate used for anchor placement + naming."""
-    if style == "forward":
-        return xscroll(ram)
-    return int(ram[ADDR_XSCROLL_HI])  # screen/room number for indoor & climb
 
 
 def replay_snapshots(trace_path):
@@ -78,12 +68,12 @@ def replay_snapshots(trace_path):
     states, coords = [], []
     for act in actions:
         states.append(env.em.get_state())              # state *before* this action
-        coords.append(progress_coord(env.unwrapped.get_ram(), style))
+        coords.append(progress_coord(env.unwrapped.get_ram()))
         a = np.asarray(act, dtype=np.uint8)
         for _ in range(SKIP):
             env.step(a.copy())
     states.append(env.em.get_state())                  # final (post-levelup) state
-    coords.append(progress_coord(env.unwrapped.get_ram(), style))
+    coords.append(progress_coord(env.unwrapped.get_ram()))
     env.close()
     return states, coords, level, style
 
