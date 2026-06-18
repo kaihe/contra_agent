@@ -12,18 +12,15 @@ behaviour (hold right + fire, jump a gap). The `mc_search` bigram prior fixes
 this *for search*; the equivalent for PPO is to **start the policy already
 playing like the demonstrations**.
 
-**Claim to test:** behavior-cloning the PPO CNN policy (both actor *and* critic)
-on the `mc_search` win traces, then resuming PPO from that checkpoint, reaches a
+**Claim to test:** behavior-cloning the PPO CNN actor on the `mc_search` win
+traces, then resuming PPO from that checkpoint, reaches a
 target win-rate / `delta_x` in **meaningfully fewer environment steps** than PPO
 from scratch — for the same wall-clock and reward config.
 
-We pretrain **both heads** deliberately:
-- **Actor** (`action_net`): gives coherent behaviour from step 0.
-- **Critic** (`value_net`): a random critic produces large, misleading
-  advantages early; PPO then spends time just calibrating `V(s)`. Seeding it
-  with returns-to-go from the traces means the first advantage estimates are
-  already roughly correct, which is often where most of the "warm-up" speedup
-  comes from.
+For the current actor-model experiments we pretrain **only the actor path**:
+`features_extractor` → policy latent → `action_net`. The critic is deliberately
+ignored so value regression cannot push the shared visual backbone away from the
+action-cloning objective.
 
 ## 2. Background: what we're cloning into
 
@@ -34,7 +31,7 @@ PPO uses SB3 `CnnPolicy` (`ActorCriticCnnPolicy`). Relevant submodules:
 | `features_extractor` (NatureCNN) | 84×84×stack → features | trained (shared) |
 | `mlp_extractor` | features → (pi, vf) latents | trained |
 | `action_net` (Linear) | pi latent → `Discrete(NUM_ACTIONS)` logits | cross-entropy vs demo action |
-| `value_net` (Linear) | vf latent → scalar `V(s)` | MSE vs return-to-go |
+| `value_net` (Linear) | vf latent → scalar `V(s)` | ignored for actor-only BC |
 
 Observation contract (must match `ContraWrapper` exactly, see
 [contra_wrapper.py](contra_wrapper.py)): `(84, 84, stack)` uint8, channels
@@ -68,11 +65,11 @@ replay.
 3. Step the wrapper with `a_t`. Record:
    - `obs_t` (the stacked observation the policy will see),
    - `a_t` (label for the actor),
-   - `r_t` (the wrapper's shaped reward — identical to PPO's, via
-     `reward_components`).
+   - `r_t` (the wrapper's shaped reward — retained for dataset diagnostics /
+     possible future critic experiments).
 4. After the rollout, compute discounted **return-to-go**
-   `G_t = Σ_{k≥t} γ^{k-t} r_k` using the **same `gamma`** as PPO (0.99). This is
-   the critic label.
+   `G_t = Σ_{k≥t} γ^{k-t} r_k` using the **same `gamma`** as PPO (0.99). The
+   current actor-only trainer does not optimize against `G_t`.
 
 Collect `(obs, a, G)` across all chosen traces into one dataset. Optionally
 include traces for multiple levels, or restrict to the level being trained.
@@ -81,8 +78,8 @@ Notes / decisions:
 - **Scope (decided): level 1 only**, **all available level-1 traces**
   (`tmp/mc_trace/level1/win_level1_*.npz`, currently 11) concatenated into one
   dataset. Multiple traces give state/action **variance** so the actor isn't fit
-  to a single trajectory and the critic sees more of the level — this directly
-  softens the entropy-collapse risk in §7.1.
+  to a single trajectory; this directly softens the entropy-collapse risk in
+  §7.1.
 - **Always use pruned traces.** `prune_actions` only removes button bits whose
   presence/absence leaves the NES RAM *identical* — so the pruned-out presses
   are **RAM-no-ops, i.e. pure noise**: the game plays out the same whatever those
@@ -92,27 +89,24 @@ Notes / decisions:
   pruning**, so the meaningful signal is intact; it's just genuinely rare. We
   handle that rarity with loss weighting / oversampling (§4), **not** by adding
   noise back via unpruned data.
-- Returns-to-go are computed on the replayed reward of the same pruned rollout,
-  so actor labels and critic targets come from one consistent pass.
+- Returns-to-go are computed on the replayed reward of the same pruned rollout
+  and kept in the cache, but ignored by the current actor-only trainer.
 - Even with 11 traces the data is **narrow** (all winning, on-path); the
   anchor-state diversity that helps PPO is not present. That's fine — BC only
-  needs to seed a reasonable basin and a roughly-calibrated critic; PPO explores
-  out from there.
+  needs to seed a reasonable actor basin; PPO explores out from there.
 
 ## 4. Training objective
 
-Per minibatch of `(obs, a, G)`:
+Per minibatch of `(obs, a, G)`; `G` is loaded but unused by actor-only BC:
 
 ```
-features  = policy.extract_features(obs)
-pi_lat, vf_lat = policy.mlp_extractor(features)
-logits    = policy.action_net(pi_lat)
-value     = policy.value_net(vf_lat)
+features = policy.extract_features(obs)
+pi_lat, _ = policy.mlp_extractor(features)
+logits   = policy.action_net(pi_lat)
 
 L_actor   = CrossEntropy(logits, a, weight=class_w)   # class_w fights imbalance, §7.1
-L_critic  = MSE(value, G)
 L_entropy = -mean(entropy(logits))                    # monitored, small/zero coeff
-L = L_actor + c_v * L_critic + c_e * L_entropy
+L = L_actor + c_e * L_entropy
 ```
 
 - **`class_w` (critical):** per-action loss weights ∝ inverse frequency
@@ -121,8 +115,6 @@ L = L_actor + c_v * L_critic + c_e * L_entropy
   actor fits only the trivial movement classes (the observed failure, §7.1).
   Alternative: **focal loss** (down-weights easy, frequent, already-correct
   examples). May also **oversample** rare-action steps in the sampler.
-- `c_v` ~ 0.5 (SB3's default vf_coef), tuned so the two losses are comparable in
-  magnitude (returns can be large → may normalize `G` or scale `c_v`).
 - `c_e`: default **0** here (entropy only *monitored*, not fought — §7.2);
   reserve a small floor for later if a warm-started run stalls.
 - Standard supervised loop: Adam, a few epochs over the dataset, shuffled
@@ -136,8 +128,8 @@ to [train.py](train.py)'s resume path. Approach:
 1. Build a `PPO("CnnPolicy", env, ...)` with the **exact** hyperparameters /
    spaces the real run uses (so the policy architecture matches).
 2. Run the supervised loop above against `model.policy` (it exposes
-   `extract_features`, `mlp_extractor`, `action_net`, `value_net`, and an
-   optimizer we can reuse or replace).
+   `extract_features`, `mlp_extractor`, and `action_net`; use a supervised
+   optimizer outside SB3's rollout loop.
 3. `model.save(out.zip)` and `save_config_to_model(...)` to embed
    `contra_config.json` (actions/skip/stack) just like training checkpoints, so
    the warm-start zip is self-describing and loadable by `infer`/`benchmark`.
@@ -167,9 +159,6 @@ Watch during pretraining (log every epoch):
   actually predicted, not collapsed into the majority movement action.
 - **Actor CE loss** — should fall steadily; a floor with low rare-class recall =
   the imbalance is winning (turn up `class_w` / oversampling, §4).
-- **Critic MSE / explained-variance** of `V(s)` vs return-to-go — explained
-  variance should approach 1.0 (the trajectories are deterministic, so the
-  critic *can* fit them nearly exactly).
 - **Greedy replay** from each trace's `initial_state`: the cloned actor, run
   greedily, should reproduce (near-)win progress. This is the real end-to-end
   check that obs + action mapping are correct.
@@ -220,32 +209,30 @@ checkpoint demonstrably memorizes and greedily replays the traces.
    rather than fighting it up front. *If* a warm-started PPO run then stalls with
    near-zero entropy, the cheap levers are an entropy floor in BC
    (`-c_e·entropy`, `c_e≈0.01`), fewer epochs / early-stop, or label smoothing.
-   The critic has no analogous concern — just regress to returns-to-go without
-   overfitting.
-3. **Critic scale.** Returns-to-go depend on reward weights; if the live PPO
-   reward config differs from the trace's (`stable`), `V(s)` targets are off.
-   → Keep BC and PPO on the **same reward config**; assert it.
-4. **Narrow data.** Even 11 winning traces only cover on-path states. PPO
-   recovers off-path, but the critic may be wrong off-path.
-   → Acceptable for the first pass; could fold in anchor-state neighbourhoods later.
-5. **Distribution shift from frame-skip/flicker.** Must replay through the real
+3. **Narrow data.** Even 11 winning traces only cover on-path states. PPO
+   recovers off-path. Acceptable for the first pass; could fold in anchor-state
+   neighbourhoods later.
+4. **Distribution shift from frame-skip/flicker.** Must replay through the real
    wrapper (covered in §3) — the #1 correctness trap and the most likely cause
    of the underfitting in §7.1.
 
 ## 8. Implementation plan (once design is agreed)
 
-- `ppo/pretrain_dataset.py` — replay traces → `(obs, a, G)` tensors, reusing
-  `ContraWrapper` + `ACTION_SPACE` + `reward_components`. Caches to `.npz`.
-- `ppo/pretrain_cnn.py` — build PPO, supervised actor+critic loop, save a
-  resume-able checkpoint (+ embedded config). CLI: `--level`, `--traces`,
-  `--epochs`, `--vf-coef`, `--ent-coef`, `--out`.
+- `ppo/pretrain_dataset.py` — replay traces → `(obs, a, G)` arrays, reusing
+  `ContraWrapper` + `ACTION_SPACE` + `reward_components`; stream observations
+  to a memmapped `.npy` plus small `.npz` metadata.
+- `ppo/pretrain_model.py` — model construction, visual backbones, policy forward
+  helper, and actor metric helpers.
+- `ppo/pretrain_train.py` — supervised actor-only loop, save a resume-able
+  checkpoint (+ embedded config). CLI: `--level`, `--resolution`, `--backbone`,
+  `--epochs`, `--ent-coef`, `--out`.
 - Config: a `pretrain:` block or a small `pretrain_<level>.yaml`.
 - Validation: greedy eval of the checkpoint; then the A/B PPO runs.
 - No change required to `train.py` (reuse `--resume`).
 
 ## Decisions
 
-- [x] Clone **actor + critic** (both heads).
+- [x] Clone **actor only** for the current visual-backbone experiments.
 - [x] Dataset: **all available level-1 traces** (currently 11) for variance.
 - [x] Scope: **level 1 only** for the first validation.
 - [ ] Entropy floor strength `c_e` — *tuned empirically* (start `≈0.01`, target

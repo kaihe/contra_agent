@@ -17,3 +17,14 @@
 
 - [] **Train with level 2**
 - [] **Mix train with level 1,2**
+- [] **Compare 192x192 resolution with BC actor initialization**
+  - Need PPO train-time 192x192 observation support before `level1_bc_r192.zip`
+    can be used as a resume checkpoint.
+
+- [] **Level 3 BC actor initialization experiment**
+  - Build a level-3 BC actor checkpoint.
+  - Compare level-3 PPO training speed: scratch vs BC-initialized.
+
+- [] **Investigate a universal BC actor checkpoint**
+  - Question: can one BC actor checkpoint provide a generally useful
+    initialization across levels, or does each level need its own BC policy?

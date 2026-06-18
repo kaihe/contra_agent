@@ -345,6 +345,10 @@ def main():
             "learning_rate": config.learning_rate,
             "clip_range": clip_range_schedule,
             "n_steps": config.n_steps,
+            "batch_size": config.batch_size,
+            "n_epochs": config.n_epochs,
+            "gamma": config.gamma,
+            "ent_coef": config.ent_coef_initial,
         }
         model = PPO.load(
             config.resume,

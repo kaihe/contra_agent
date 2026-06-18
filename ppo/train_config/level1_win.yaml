@@ -17,8 +17,8 @@
 #     clip_fraction climbed to 0.43 (healthy <0.2) late — updates were thrashing
 
 game: Contra-Nes
-name: level1_e5_128m_skip4
-timesteps: 128000000
+name: level1_e6_bc_resume
+timesteps: 96000000
 resume:
 seed: 0
 device: cuda

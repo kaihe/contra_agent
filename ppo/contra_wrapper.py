@@ -115,9 +115,9 @@ class Monitor:
             self._pygame.quit()
 
 
-def process_frame(frame):
-    """RGB → resized RGB 84×84, shape (84, 84, 3) uint8."""
-    return cv2.resize(frame, (84, 84), interpolation=cv2.INTER_AREA)
+def process_frame(frame, size=84):
+    """RGB → resized RGB size×size, shape (size, size, 3) uint8."""
+    return cv2.resize(frame, (size, size), interpolation=cv2.INTER_AREA)
 
 
 class RandomStateWrapper(gym.Wrapper):
@@ -161,7 +161,7 @@ class ContraWrapper(gym.Wrapper):
     def __init__(self, env, monitor=None, random_start_frames=0,
                  warmup_frames=120, skip=None, stack=3, level=1,
                  max_episode_steps=10000,
-                 reward_weights=None):
+                 reward_weights=None, resolution=84):
         super().__init__(env)
         weights = DEFAULT_REWARD_WEIGHTS.copy()
         if reward_weights is not None:
@@ -179,17 +179,20 @@ class ContraWrapper(gym.Wrapper):
         self.stack = stack
         self.level = level
         self.max_episode_steps = max_episode_steps
+        self.resolution = resolution
         if stack != len(HISTORY_OFFSETS):
             raise ValueError(
                 f"stack={stack} must match len(HISTORY_OFFSETS)={len(HISTORY_OFFSETS)}"
             )
 
         self.action_space = gym.spaces.Discrete(NUM_ACTIONS)
-        # Small ring buffer for recent RGB 84×84 frames.
-        self._buf = np.zeros((BUFFER_FRAMES, 84, 84, RGB_CHANNELS), dtype=np.uint8)
+        # Small ring buffer for recent RGB resolution×resolution frames.
+        self._buf = np.zeros(
+            (BUFFER_FRAMES, resolution, resolution, RGB_CHANNELS), dtype=np.uint8
+        )
         self._buf_pos = 0
         self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(84, 84, stack), dtype=np.uint8
+            low=0, high=255, shape=(resolution, resolution, stack), dtype=np.uint8
         )
 
         self.prev_ram = np.zeros(2048, dtype=np.uint8)
@@ -294,7 +297,7 @@ class ContraWrapper(gym.Wrapper):
         self.max_progress = progress_coord(ram)
         self.episode_start_progress = self.max_progress
 
-        self._buf[:] = process_frame(observation)
+        self._buf[:] = process_frame(observation, self.resolution)
         self._buf_pos = 0
 
         return self._get_obs(), info
@@ -325,7 +328,7 @@ class ContraWrapper(gym.Wrapper):
         # Max-pool the last two raw frames to defeat NES sprite flicker.
         pooled = np.maximum.reduce(states[-2:])
         self._buf_pos = (self._buf_pos + 1) % BUFFER_FRAMES
-        self._buf[self._buf_pos] = process_frame(pooled)
+        self._buf[self._buf_pos] = process_frame(pooled, self.resolution)
 
         if done:
             info.update({
@@ -347,11 +350,11 @@ class ContraWrapper(gym.Wrapper):
 
 def create_env(env, monitor=None, random_start_frames=0, warmup_frames=120,
                skip=None, stack=3, level=1, max_episode_steps=10000,
-               reward_weights=None):
+               reward_weights=None, resolution=84):
     """Wrap a retro env with reward shaping + frame skip + history sampling."""
     return ContraWrapper(env, monitor=monitor,
                          random_start_frames=random_start_frames,
                          warmup_frames=warmup_frames,
                          skip=skip, stack=stack, level=level,
                          max_episode_steps=max_episode_steps,
-                         reward_weights=reward_weights)
+                         reward_weights=reward_weights, resolution=resolution)
