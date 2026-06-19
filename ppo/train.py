@@ -27,6 +27,7 @@ from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
+import model as model_lib
 from contra.reward import load as load_reward_config
 from contra_wrapper import (
     ACTION_SKIP,
@@ -359,7 +360,7 @@ def main():
         print(f"  Resumed at timestep {model.num_timesteps:,}")
     else:
         model = PPO(
-            "CnnPolicy",
+            model_lib.POLICY,
             env,
             device=config.device,
             verbose=0,
@@ -370,6 +371,7 @@ def main():
             ent_coef=config.ent_coef_initial,
             learning_rate=config.learning_rate,
             clip_range=clip_range_schedule,
+            policy_kwargs=model_lib.policy_kwargs(),
         )
 
     # Write tensorboard events straight into exp_dir (alongside checkpoints),

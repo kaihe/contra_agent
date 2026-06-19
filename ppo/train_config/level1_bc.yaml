@@ -1,0 +1,37 @@
+# Level 1 e5 128M BC A/B (low entropy): same as level1_e5_128m_bc, but with a
+# much smaller entropy coefficient so PPO refines the BC prior instead of
+# flattening it back toward uniform. The original ent_coef=0.1 was pushing the
+# policy entropy up (0.9 -> 2.4 nats, ceiling ln(21)=3.04) and progress/reward
+# peaked ~3.4M steps then regressed. Here we start at 0.005 and decay to 0.001.
+
+game: Contra-Nes
+name: level1_e8_state_aug
+timesteps: 128000000
+resume: tmp/ppo/pretrain/level1_bc.zip
+seed: 0
+device: cuda
+
+num_envs: 16
+random_start_frames: 0
+warmup_frames: 240
+max_episode_steps: 5000
+stack: 3
+
+n_steps: 1024
+batch_size: 2048
+n_epochs: 4
+gamma: 0.99
+learning_rate: 1.0e-4
+clip_range_initial: 0.2
+clip_range_final: 0.1
+ent_coef_initial: 0.005
+ent_coef_final: 0.001
+
+
+out_dir: tmp/ppo
+save_freq: 62500
+
+states:
+  - ppo/states/level1_*.state
+
+reward_config: boss_more_reward

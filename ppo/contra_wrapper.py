@@ -11,6 +11,7 @@ import numpy as np
 
 from contra.action_space import DEFAULT as ACTION_SPACE
 from contra.events import is_gameplay
+from contra.game_state import STATE_DIM, state_from_ram
 from contra.reward import (
     DEFAULT_REWARD_WEIGHTS,
     progress_coord,
@@ -191,8 +192,15 @@ class ContraWrapper(gym.Wrapper):
             (BUFFER_FRAMES, resolution, resolution, RGB_CHANNELS), dtype=np.uint8
         )
         self._buf_pos = 0
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(resolution, resolution, stack), dtype=np.uint8
+        self.observation_space = gym.spaces.Dict(
+            {
+                "image": gym.spaces.Box(
+                    low=0, high=255, shape=(resolution, resolution, stack), dtype=np.uint8
+                ),
+                "priv": gym.spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(STATE_DIM,), dtype=np.float32
+                ),
+            }
         )
 
         self.prev_ram = np.zeros(2048, dtype=np.uint8)
@@ -210,19 +218,23 @@ class ContraWrapper(gym.Wrapper):
             "end_reason": "",
         }
 
-    def _get_obs(self) -> np.ndarray:
+    def _get_obs(self) -> dict:
         indices = [(self._buf_pos - offset) % BUFFER_FRAMES for offset in HISTORY_OFFSETS]
         channels = [
             self._buf[indices[channel_idx], :, :, channel_idx]
             for channel_idx in range(RGB_CHANNELS)
         ]
-        return np.stack(channels, axis=-1)
+        return {
+            "image": np.stack(channels, axis=-1),
+            "priv": state_from_ram(self.unwrapped.get_ram()),
+        }
 
     def _compute_rewards(self, info, done):
         curr_ram = self.unwrapped.get_ram()
         curr_xscroll = xscroll(curr_ram)
         # High-water mark of progress (level-aware: xscroll on side-scroll levels,
-        # screen/room number indoors & climbing). Used for episode_progress because
+        # screen/room number indoors, vertical pixel coord climbing). Used for
+        # episode_progress because
         # a levelup resets the coordinate to ~0 on the winning frame; tracking the
         # max keeps the real furthest position instead of that reset value.
         self.max_progress = max(self.max_progress, progress_coord(curr_ram))

@@ -24,6 +24,7 @@ import yaml
 
 from contra.events import (
     ADDR_LEVEL,
+    ADDR_SCROLL_OFF,
     ADDR_XSCROLL_HI,
     EV_BOSS_HIT,
     EV_CORE_BROKEN,
@@ -67,15 +68,23 @@ def progress_coord(ram: np.ndarray) -> int:
 
       "forward" : horizontal scroll position (pixels)        — side-scroll levels
       "inside"  : screen/room number (ADDR_XSCROLL_HI)       — indoor base levels
-      "up"      : screen number (ADDR_XSCROLL_HI)            — climbing levels
+      "up"      : vertical pixel coordinate (screen*240 + scroll offset) — climbing
 
     Unlike a raw xscroll read, this stays meaningful on indoor/climb levels where
-    horizontal scroll barely moves. Track its high-water mark across an episode to
-    get total progress.
+    horizontal scroll barely moves. On climbing levels it composes the screen index
+    (ADDR_XSCROLL_HI) with the within-screen scroll offset (ADDR_SCROLL_OFF) into one
+    dense pixel coordinate, tracking the same vertical-scroll axis the push_up reward
+    (EV_PUSH_UP / _yscroll_delta) optimises. The bare screen index is too coarse — it
+    only ticks once per full screen, so it reads ~0 even while the player climbs.
+
+    Track its high-water mark across an episode to get total progress.
     """
-    if level_advance_style(int(ram[ADDR_LEVEL])) == "forward":
+    style = level_advance_style(int(ram[ADDR_LEVEL]))
+    if style == "forward":
         return xscroll(ram)
-    return int(ram[ADDR_XSCROLL_HI])  # screen/room number for indoor & climb
+    if style == "up":
+        return int(ram[ADDR_XSCROLL_HI]) * 240 + int(ram[ADDR_SCROLL_OFF])
+    return int(ram[ADDR_XSCROLL_HI])  # screen/room number for indoor
 
 
 def reward_components(

@@ -1,0 +1,32 @@
+# Stable reward config — single source of truth for every level, shared by PPO
+# (reward_config: stable in the train YAML) and mc_search (--reward-config stable,
+# the default), so both optimise one objective: a win path found by search is
+# meaningful evidence the shaping is learnable.
+#
+# Weights are merged onto contra/reward.py DEFAULT_REWARD_WEIGHTS. One file works
+# for all levels because contra/reward.py applies only the advancement term that
+# matches the level's style (level_advance_style), so the per-style weights below
+# never conflict:
+#   "forward" (L1, L5-L8 side-scroll) -> progress
+#   "inside"  (L2, L4 indoor base)    -> push_inside, room_enter, core_broken
+#   "up"      (L3 waterfall climb)    -> push_up
+# The combat / item / terminal weights apply to every level.
+
+reward_weights:
+  # combat / items (level-agnostic)
+  enemy_hp: 1.0          # DENSE regular enemy damage (falling rocks excluded on L3)
+  boss_hp: 1.0           # DENSE boss / core damage; doubles as room-clear signal
+  spread_pick: 20.0      # +20 for picking Spread, -20 for losing it
+  rapid_fire: 10.0       # +10 for gaining the rapid-fire flag via a pickup
+
+  # terminal (level-agnostic)
+  levelup: 30.0           
+  player_die: -20.0
+  time_out: 0          
+
+  # advancement — only the level's own style term is applied
+  progress: 0.1          # "forward": per xscroll pixel
+  push_inside: 1.0       # "inside": DENSE primary progress through indoor rooms
+  room_enter: 1.0        # "inside": sparse per-room milestone
+  core_broken: 1.0       # "inside": sparse core-clear spike (redundant with boss_hp)
+  push_up: 1.0           # "up": DENSE vertical scroll progress through the waterfall

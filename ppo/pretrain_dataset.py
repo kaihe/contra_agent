@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from contra_wrapper import ContraWrapper, process_frame  # noqa: E402
 
 from contra.action_space import DEFAULT as ACTION_SPACE
+from contra.game_state import STATE_DIM
 from contra.reward import load as load_reward_config, progress_coord, xscroll
 
 GAME = "Contra-Nes"
@@ -115,7 +116,7 @@ def seed_wrapper_at_state(wrapper, initial_bytes):
 
 
 def replay_trace(trace_path, reward_weights, stack, gamma, resolution=84):
-    """Replay one trace → (obs, action_idx, return_to_go) arrays + outcome dict."""
+    """Replay one trace → (image, priv, action_idx, return_to_go) arrays + outcome."""
     d = np.load(trace_path, allow_pickle=True)
     actions = d["actions"]
     initial = bytes(d["initial_state"])
@@ -129,11 +130,12 @@ def replay_trace(trace_path, reward_weights, stack, gamma, resolution=84):
     wrapper.reset()
     obs = seed_wrapper_at_state(wrapper, initial)
 
-    obs_list, act_list, rew_list = [], [], []
+    img_list, priv_list, act_list, rew_list = [], [], [], []
     end_reason = ""
     for vec in actions:
         idx = _VEC_TO_IDX[tuple(int(b) for b in vec)]
-        obs_list.append(obs)                       # observation *before* the action
+        img_list.append(obs["image"])              # observation *before* the action
+        priv_list.append(obs["priv"])
         act_list.append(idx)
         obs, reward, term, trunc, info = wrapper.step(idx)
         rew_list.append(reward)
@@ -143,11 +145,13 @@ def replay_trace(trace_path, reward_weights, stack, gamma, resolution=84):
     progress = wrapper.max_progress - wrapper.episode_start_progress
     wrapper.close()
 
-    obs_arr = np.asarray(obs_list, dtype=np.uint8)
+    img_arr = np.asarray(img_list, dtype=np.uint8)
+    priv_arr = np.asarray(priv_list, dtype=np.float32)
     act_arr = np.asarray(act_list, dtype=np.int64)
     ret_arr = discounted_returns(rew_list, gamma)
     return (
-        obs_arr,
+        img_arr,
+        priv_arr,
         act_arr,
         ret_arr,
         {"end_reason": end_reason, "progress": int(progress)},
@@ -177,29 +181,37 @@ def _print_stats(actions, returns):
 class BCDataset(Dataset):
     """Lazy memmapped BC dataset.
 
-    Observations stay on disk and are read one sample at a time; actions and
-    returns are small enough to keep as tensors in memory. The memmap opens
-    lazily so DataLoader workers each get their own file handle.
+    Image and priv observations stay on disk and are read one sample at a time;
+    actions and returns are small enough to keep as tensors in memory. The
+    memmaps open lazily so DataLoader workers each get their own file handle.
     """
 
-    def __init__(self, obs_path, count, actions, returns):
+    def __init__(self, obs_path, priv_path, count, actions, returns):
         self.obs_path = obs_path
+        self.priv_path = priv_path
         self.count = int(count)
         self.actions = torch.as_tensor(np.asarray(actions), dtype=torch.long)
         self.returns = torch.as_tensor(np.asarray(returns), dtype=torch.float32)
         self._obs = None
+        self._priv = None
 
     def _obs_mm(self):
         if self._obs is None:
             self._obs = np.load(self.obs_path, mmap_mode="r")
         return self._obs
 
+    def _priv_mm(self):
+        if self._priv is None:
+            self._priv = np.load(self.priv_path, mmap_mode="r")
+        return self._priv
+
     def __len__(self):
         return self.count
 
     def __getitem__(self, index):
         obs = torch.from_numpy(np.array(self._obs_mm()[index]))
-        return obs, self.actions[index], self.returns[index]
+        priv = torch.from_numpy(np.array(self._priv_mm()[index]))
+        return obs, priv, self.actions[index], self.returns[index]
 
 
 def make_loader(dataset, batch_size, shuffle, num_workers):
@@ -215,10 +227,10 @@ def make_loader(dataset, batch_size, shuffle, num_workers):
 
 
 def cache_paths(level, resolution, cache_dir=CACHE_DIR):
-    """(obs .npy memmap, meta .npz) cache paths for a level/resolution."""
+    """(obs .npy, priv .npy, meta .npz) cache paths for a level/resolution."""
     res_tag = "" if resolution == 84 else f"_r{resolution}"
     base = os.path.join(cache_dir, f"level{level}_bc{res_tag}")
-    return base + "_obs.npy", base + "_meta.npz"
+    return base + "_obs.npy", base + "_priv.npy", base + "_meta.npz"
 
 
 def load_cache_meta(meta_path):
@@ -233,25 +245,27 @@ def load_cache_meta(meta_path):
 
 
 def ensure_cache(level, resolution, reward_config="stable", stack=3, gamma=0.99):
-    """Build the cache if needed, then return obs path and metadata."""
-    obs_path, meta_path = cache_paths(level, resolution)
-    if not (os.path.isfile(obs_path) and os.path.isfile(meta_path)):
+    """Build the cache if needed, then return (obs path, priv path, metadata)."""
+    obs_path, priv_path, meta_path = cache_paths(level, resolution)
+    if not (os.path.isfile(obs_path) and os.path.isfile(priv_path) and os.path.isfile(meta_path)):
         print(f"No cache; building memmap dataset for level {level} @res {resolution}")
         build_to_disk(
             resolve_traces(level),
             obs_path,
+            priv_path,
             meta_path,
             reward_config=reward_config,
             stack=stack,
             gamma=gamma,
             resolution=resolution,
         )
-    return obs_path, load_cache_meta(meta_path)
+    return obs_path, priv_path, load_cache_meta(meta_path)
 
 
 def build_to_disk(
     traces,
     obs_path,
+    priv_path,
     meta_path,
     reward_config="stable",
     stack=3,
@@ -259,10 +273,10 @@ def build_to_disk(
     resolution=84,
     verbose=True,
 ):
-    """Replay traces, streaming obs straight into a memmapped .npy on disk.
+    """Replay traces, streaming obs/priv straight into memmapped .npy files.
 
-    Build RAM stays ~one trace (obs go to the disk-backed memmap, not a big RAM
-    buffer), and training mmaps the obs file so it never loads the full set into
+    Build RAM stays ~one trace (obs go to the disk-backed memmaps, not a big RAM
+    buffer), and training mmaps the files so it never loads the full set into
     RAM. The small meta .npz holds actions / returns / config. Returns the sample
     count. This is the cache the trainer consumes (see pretrain_train)."""
     from numpy.lib.format import open_memmap
@@ -282,14 +296,21 @@ def build_to_disk(
         dtype=np.uint8,
         shape=(total, resolution, resolution, 3),
     )
+    priv_mm = open_memmap(
+        priv_path,
+        mode="w+",
+        dtype=np.float32,
+        shape=(total, STATE_DIM),
+    )
     act_all = np.empty(total, dtype=np.int64)
     ret_all = np.empty(total, dtype=np.float32)
 
     cursor = wins = 0
     for t in traces:
-        obs, act, ret, info = replay_trace(t, reward_weights, stack, gamma, resolution)
+        obs, priv, act, ret, info = replay_trace(t, reward_weights, stack, gamma, resolution)
         n = len(act)
         obs_mm[cursor:cursor + n] = obs
+        priv_mm[cursor:cursor + n] = priv
         act_all[cursor:cursor + n] = act
         ret_all[cursor:cursor + n] = ret
         cursor += n
@@ -302,7 +323,8 @@ def build_to_disk(
                 f"{flag}  prog={info['progress']}"
             )
     obs_mm.flush()
-    del obs_mm
+    priv_mm.flush()
+    del obs_mm, priv_mm
 
     act_all, ret_all = act_all[:cursor], ret_all[:cursor]
     np.savez(
@@ -324,6 +346,7 @@ def build_to_disk(
             print("  WARNING: some traces did not reproduce a win through the wrapper.")
         _print_stats(act_all, ret_all)
         print(f"\n  obs  → {obs_path}  ({os.path.getsize(obs_path) / 1e6:.0f} MB, memmap)")
+        print(f"  priv → {priv_path}  ({os.path.getsize(priv_path) / 1e6:.0f} MB, memmap)")
         print(f"  meta → {meta_path}")
     return cursor
 
@@ -365,7 +388,7 @@ def main():
         reward_weights = load_reward_config(args.reward_config).reward_weights
         acts, rets = [], []
         for t in traces:
-            _, act, ret, _ = replay_trace(
+            _, _, act, ret, _ = replay_trace(
                 t,
                 reward_weights,
                 args.stack,
@@ -378,10 +401,11 @@ def main():
         print("\n  --dry-run: cache not written")
         return
 
-    obs_path, meta_path = cache_paths(args.level, args.resolution)
+    obs_path, priv_path, meta_path = cache_paths(args.level, args.resolution)
     build_to_disk(
         traces,
         obs_path,
+        priv_path,
         meta_path,
         args.reward_config,
         args.stack,

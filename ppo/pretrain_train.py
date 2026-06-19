@@ -3,7 +3,6 @@
 Usage:
     python3 ppo/pretrain_train.py --level 1 --epochs 30
     python3 ppo/pretrain_train.py --level 1 --resolution 192 --num-workers 4
-    python3 ppo/pretrain_train.py --level 1 --resolution 192 --backbone rescnn --num-workers 4
 """
 
 import argparse
@@ -19,7 +18,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(__file__))
 import pretrain_dataset as data  # noqa: E402
-import pretrain_model as model_lib  # noqa: E402
+import model as model_lib  # noqa: E402
 from contra_wrapper import save_config_to_model  # noqa: E402
 
 from contra.action_space import DEFAULT as ACTION_SPACE
@@ -37,8 +36,6 @@ def parse_args():
     parser.add_argument("--stack", type=int, default=3)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--resolution", type=int, default=84)
-    parser.add_argument("--backbone", default="nature", choices=["nature", "rescnn"])
-    parser.add_argument("--features-dim", type=int, default=512)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -58,12 +55,11 @@ def checkpoint_path(args):
     if args.out:
         return args.out
     res_tag = "" if args.resolution == 84 else f"_r{args.resolution}"
-    backbone_tag = "" if args.backbone == "nature" else f"_{args.backbone}"
-    return os.path.join(OUT_DIR, f"level{args.level}_bc{res_tag}{backbone_tag}.zip")
+    return os.path.join(OUT_DIR, f"level{args.level}_bc{res_tag}.zip")
 
 
 def make_dataloaders(args):
-    obs_path, meta = data.ensure_cache(
+    obs_path, priv_path, meta = data.ensure_cache(
         level=args.level,
         resolution=args.resolution,
         reward_config=args.reward_config,
@@ -72,6 +68,7 @@ def make_dataloaders(args):
     )
     dataset = data.BCDataset(
         obs_path,
+        priv_path,
         meta["count"],
         meta["actions"],
         meta["returns"],
@@ -103,9 +100,9 @@ def evaluate(policy, loader, device):
     fire_hit = fire_n = jump_hit = jump_n = 0
 
     with torch.no_grad():
-        for obs, action, _ret in loader:
+        for obs, priv, action, _ret in loader:
             action = action.to(device)
-            logits = model_lib.forward_actor(policy, obs, device)
+            logits = model_lib.forward_actor(policy, obs, priv, device)
             pred = logits.argmax(-1)
 
             correct += (pred == action).sum().item()
@@ -133,9 +130,9 @@ def train(policy, train_loader, eval_loader, args, device, class_weights):
         policy.set_training_mode(True)
         actor_loss_sum = entropy_sum = 0.0
 
-        for obs, action, _ret in train_loader:
+        for obs, priv, action, _ret in train_loader:
             action = action.to(device)
-            logits = model_lib.forward_actor(policy, obs, device)
+            logits = model_lib.forward_actor(policy, obs, priv, device)
 
             actor_loss = F.cross_entropy(logits, action, weight=class_weights_t)
             entropy = torch.distributions.Categorical(logits=logits).entropy().mean()
@@ -170,14 +167,11 @@ def main():
     model = model_lib.build_ppo_model(
         stack=meta["stack"],
         resolution=meta["resolution"],
-        backbone=args.backbone,
-        features_dim=args.features_dim,
         gamma=args.gamma,
         device=device,
     )
     policy = model.policy
     print(
-        f"backbone: {args.backbone}  "
         f"features_dim={policy.features_dim}  "
         f"params={model_lib.count_params(policy):,}  "
         f"extractor_params={model_lib.count_params(policy.features_extractor):,}"
