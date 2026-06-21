@@ -59,6 +59,8 @@ class PPOConfig:
     warmup_frames: int = 120
     max_episode_steps: int = 10000
     stack: int = 4
+    resolution: int = 84
+    backbone: str = "nature"  # image extractor: "nature" (84x84) or "rescnn" (hi-res)
 
     n_steps: int = 2048
     batch_size: int = 2048
@@ -291,6 +293,7 @@ def make_env(config: PPOConfig, rank: int):
             level=level,
             max_episode_steps=config.max_episode_steps,
             reward_weights=config.reward_weights,
+            resolution=config.resolution,
         )
         np.random.seed(config.seed + rank)
         env.action_space.seed(config.seed + rank)
@@ -371,7 +374,7 @@ def main():
             ent_coef=config.ent_coef_initial,
             learning_rate=config.learning_rate,
             clip_range=clip_range_schedule,
-            policy_kwargs=model_lib.policy_kwargs(),
+            policy_kwargs=model_lib.policy_kwargs(backbone=config.backbone),
         )
 
     # Write tensorboard events straight into exp_dir (alongside checkpoints),

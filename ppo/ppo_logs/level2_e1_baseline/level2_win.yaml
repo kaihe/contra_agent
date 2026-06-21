@@ -1,0 +1,43 @@
+# Level 2 (indoor base) — same recipe as train_config/level1_win.yaml, adapted to the
+# indoor "walk into the screen" advancement reward.
+#
+# The wrapper reward is now level-aware: it reads the level from RAM and selects
+# the advancement style (events.level_advance_style). Level 2 is "inside", so
+# the horizontal `progress` term is replaced by core_broken / room_enter /
+# push_inside.
+# Reward weights live in contra/reward_configs/stable.yaml so PPO and
+# mc_search optimise the same objective.
+
+game: Contra-Nes
+name: level2_e1_baseline
+timesteps: 96000000
+resume:
+seed: 0
+device: cuda
+
+num_envs: 16
+random_start_frames: 0
+warmup_frames: 240
+max_episode_steps: 4000
+stack: 3
+
+n_steps: 1024
+batch_size: 2048
+n_epochs: 4
+gamma: 0.99
+learning_rate: 1.0e-4
+clip_range_initial: 0.2
+clip_range_final: 0.1
+ent_coef_initial: 0.1
+ent_coef_final: 0.005
+
+out_dir: tmp/ppo
+save_freq: 62500
+
+# 6 anchors carved from one winning level-2 trace (win_level2_202606151121) by
+# ppo/make_states.py: one at the entry of each indoor room (screens 0-4) plus
+# the boss room (screen 5). Glob expanded at load time.
+states:
+  - ppo/states/level2_*.state
+
+reward_config: stable

@@ -1,0 +1,37 @@
+# Level 1 e10: 192x192 image observation A/B off e9 (no BC, state-augmented net).
+# e9 (84x84) reached the boss and survived but could not finish — hypothesis is
+# the 84x84 input is too coarse for the boss fight. Same setup, larger input.
+# NOTE: ~5x the pixels of 84x84 -> higher VRAM and lower fps; NatureCNN's flatten
+# FC grows large at this resolution (a deeper/pooled backbone is the next lever).
+
+game: Contra-Nes
+name: level1_e10_192
+timesteps: 96000000
+seed: 0
+device: cuda
+
+num_envs: 16
+random_start_frames: 0
+warmup_frames: 240
+max_episode_steps: 5000
+stack: 3
+resolution: 192
+backbone: rescnn
+
+n_steps: 1024
+batch_size: 512
+n_epochs: 4
+gamma: 0.99
+learning_rate: 1.0e-4
+clip_range_initial: 0.2
+clip_range_final: 0.1
+ent_coef_initial: 0.005
+ent_coef_final: 0.001
+
+out_dir: tmp/ppo
+save_freq: 125000
+
+states:
+  - ppo/states/level1_*.state
+
+reward_config: boss_more_reward

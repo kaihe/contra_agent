@@ -53,17 +53,66 @@ class SpaceStub(gym.Env):
         return self.observation_space.sample(), 0.0, True, False, {}
 
 
-class ImageStateExtractor(BaseFeaturesExtractor):
-    """NatureCNN over the image + MLP over the RAM state, concatenated.
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+        )
 
-    Shared by actor and critic. A leading BatchNorm standardises the
-    heterogeneously-scaled ``priv`` vector per feature (so one-hots and the
-    ~3000-px scroll coordinate coexist), removing the need for VecNormalize.
+    def forward(self, x):
+        return x + self.net(x)
+
+
+class ResCnn(nn.Module):
+    """Residual conv backbone; resolution-agnostic via global average pool.
+
+    Four stride-2 residual stages downsample the frame, then AdaptiveAvgPool2d
+    collapses to 1x1 so the head size is independent of input resolution —
+    unlike NatureCNN, whose flatten FC balloons (~13M params) at 192x192. Deeper
+    and far lighter, it actually uses the extra resolution convolutionally.
     """
 
-    def __init__(self, observation_space, cnn_dim=512, state_dim=128):
+    def __init__(self, image_space, features_dim=512, channels=(32, 64, 128, 128)):
+        super().__init__()
+        in_ch = image_space.shape[0]
+        layers = []
+        for out_ch in channels:
+            layers += [
+                nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=2, padding=1),
+                ResidualBlock(out_ch),
+            ]
+            in_ch = out_ch
+        self.cnn = nn.Sequential(*layers, nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1))
+        self.linear = nn.Sequential(
+            nn.Flatten(), nn.Linear(in_ch, features_dim), nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.linear(self.cnn(x))
+
+
+_BACKBONES = {"nature": NatureCNN, "rescnn": ResCnn}
+
+
+class ImageStateExtractor(BaseFeaturesExtractor):
+    """Image backbone + MLP over the RAM state, concatenated.
+
+    Shared by actor and critic. The image backbone is selectable
+    (``nature`` for 84x84, ``rescnn`` for higher resolutions). A leading
+    BatchNorm standardises the heterogeneously-scaled ``priv`` vector per feature
+    (so one-hots and the ~3000-px scroll coordinate coexist), removing the need
+    for VecNormalize.
+    """
+
+    def __init__(self, observation_space, backbone="nature", cnn_dim=512, state_dim=128):
         super().__init__(observation_space, features_dim=cnn_dim + state_dim)
-        self.cnn = NatureCNN(observation_space["image"], features_dim=cnn_dim)
+        if backbone not in _BACKBONES:
+            raise ValueError(f"Unknown backbone {backbone!r}; choose from {sorted(_BACKBONES)}")
+        self.cnn = _BACKBONES[backbone](observation_space["image"], features_dim=cnn_dim)
         n_priv = observation_space["priv"].shape[0]
         self.mlp = nn.Sequential(
             nn.BatchNorm1d(n_priv),
@@ -77,15 +126,15 @@ class ImageStateExtractor(BaseFeaturesExtractor):
         return torch.cat([self.cnn(obs["image"]), self.mlp(obs["priv"])], dim=1)
 
 
-def policy_kwargs(cnn_dim=512, state_dim=128):
+def policy_kwargs(backbone="nature", cnn_dim=512, state_dim=128):
     return dict(
         features_extractor_class=ImageStateExtractor,
-        features_extractor_kwargs=dict(cnn_dim=cnn_dim, state_dim=state_dim),
+        features_extractor_kwargs=dict(backbone=backbone, cnn_dim=cnn_dim, state_dim=state_dim),
     )
 
 
 def build_ppo_model(stack, resolution, gamma, device,
-                    cnn_dim=512, state_dim=128, **ppo_kwargs):
+                    backbone="nature", cnn_dim=512, state_dim=128, **ppo_kwargs):
     """Build a PPO model on the shared policy (used by BC pretraining)."""
     env = DummyVecEnv([lambda: SpaceStub(stack, resolution)])
     return PPO(
@@ -94,7 +143,7 @@ def build_ppo_model(stack, resolution, gamma, device,
         device=device,
         gamma=gamma,
         verbose=0,
-        policy_kwargs=policy_kwargs(cnn_dim, state_dim),
+        policy_kwargs=policy_kwargs(backbone, cnn_dim, state_dim),
         **ppo_kwargs,
     )
 

@@ -153,6 +153,7 @@ def main():
         stack=config.get("stack", 3),
         max_episode_steps=train_config.get("max_episode_steps", 2000),
         reward_weights=train_config.get("reward_weights"),
+        resolution=train_config.get("resolution", 84),
     )
 
     os.makedirs(GIF_DIR, exist_ok=True)

@@ -5,8 +5,9 @@
 # peaked ~3.4M steps then regressed. Here we start at 0.005 and decay to 0.001.
 
 game: Contra-Nes
-name: level1_e9_no_bc
+name: level1_e8_state_aug
 timesteps: 128000000
+resume: tmp/ppo/pretrain/level1_bc.zip
 seed: 0
 device: cuda
 
@@ -28,7 +29,7 @@ ent_coef_final: 0.001
 
 
 out_dir: tmp/ppo
-save_freq: 125000
+save_freq: 62500
 
 states:
   - ppo/states/level1_*.state
