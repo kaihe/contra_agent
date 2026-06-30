@@ -2,7 +2,7 @@
 
 Thin CLI over synthetic.mc_search.generate_traces: runs the bigram-guided
 Monte Carlo search repeatedly until N winning traces are collected. Each trace
-is pruned, verified to still clear the level, and saved under
+is kept clean during generation by the fire/jump penalty and saved under
 tmp/mc_trace/level<N>/ with a unique, instance-suffixed filename.
 
 (Equivalent to `python synthetic/mc_search.py --level X --runs N`; this script
@@ -43,8 +43,6 @@ def main():
     p.add_argument("--goal", type=str, default="level_up",
                    choices=["level_up", "game_clear"],
                    help="level_up: stop on level-up (default); game_clear: full clear")
-    p.add_argument("--reward-config", type=str, default=None,
-                   help="Reward config name under contra/reward_configs/ (default: stable)")
     args = p.parse_args()
 
     print(f"Generating {args.n} winning trace(s) for level {args.level} "
@@ -52,7 +50,7 @@ def main():
     paths = generate_traces(
         args.level, args.n,
         max_time=args.max_time, workers=args.workers, goal=args.goal,
-        reward_config=args.reward_config, max_attempts=args.max_attempts,
+        max_attempts=args.max_attempts,
     )
     for path in paths:
         print(f"  {path}")

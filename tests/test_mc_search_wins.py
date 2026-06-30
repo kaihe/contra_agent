@@ -1,6 +1,8 @@
 """Acceptance tests: mc_search must find a win path for every level at the
-shipped default budget, using the canonical action space (baseline.yaml) and the
-shared `stable` reward config.
+shipped default budget, using the search action space + reward
+(synthetic/action_configs/search_action_space.py, .../search_reward.py): a per-level
+table when ``synthetic/action_configs/level<N>.yaml`` exists, else baseline, with
+the fire/jump press penalties from that file (or defaults).
 
 These are slow, stochastic, opt-in tests — they actually run the Monte Carlo
 search. Run them explicitly:
@@ -93,10 +95,10 @@ def test_mc_search_wins_level(level, tmp_path, monkeypatch, capsys):
             f"rollouts={DEFAULT_BUDGET['rollouts']}, workers={DEFAULT_BUDGET['workers']})...",
             flush=True,
         )
-        # reward_config=None → the shared "stable" config (_resolve_reward_config).
+        # fire_cost/jump_cost default to the level<N>.yaml costs: block (or the
+        # search_reward default) when not overridden here.
         trace_path = mc_search._run_one_search(
             level=level,
-            reward_config=None,
             verbose=True,
             **DEFAULT_BUDGET,
         )

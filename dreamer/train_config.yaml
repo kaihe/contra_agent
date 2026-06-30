@@ -1,0 +1,48 @@
+# Component 6 — full DreamerV3 training loop (dreamer/train.py) configuration.
+#
+# These are the defaults. Override any field on the CLI:
+#     python -m dreamer.train --iters 100 --ent_coef 0.02
+# or point at a different config file entirely:
+#     python -m dreamer.train --config experiments/run_b.yaml
+# (CLI flag  >  this file  >  nothing). --smoke still shrinks the run for wiring checks.
+
+# ── warm start ────────────────────────────────────────────────────────────────
+ckpt: tmp/dreamer/world_model.pt   # trace-pretrained world model to warm-start from
+
+# ── data / replay ─────────────────────────────────────────────────────────────
+train_traces: 0        # pinned win-traces (boss/late-level/win coverage); 0 = use ALL (42), or set N to cap
+trace_frac: 0.5        # fraction of each training batch drawn from the pinned traces
+                       #   (anti-forgetting: keep this > 0 so the WM never loses the boss)
+actor_cap: 80000       # actor replay ring capacity, in decisions
+seq_len: 20            # training subsequence length
+batch: 16              # sequences per gradient batch
+
+# ── loop schedule ─────────────────────────────────────────────────────────────
+iters: 60              # outer iterations: each = collect -> WM updates -> AC updates -> eval
+collect_eps: 6         # real episodes collected (stochastic) per iter
+wm_updates: 150        # world-model gradient steps per iter
+ac_updates: 150        # actor+critic gradient steps per iter
+max_steps: 1000        # cap per collected/eval episode (decisions)
+
+# ── imagination / returns ─────────────────────────────────────────────────────
+horizon: 15            # imagination rollout length (match the ~15-step reliable dream)
+imag_batch: 256        # anchor states imagined per AC update
+gamma: 0.95            # discount — matched to the dream horizon (see C4 finding)
+lam: 0.95              # λ-return bias/variance mix
+ent_coef: 0.01         # entropy bonus (higher than C5 eval → keep exploring while collecting)
+
+# ── model ─────────────────────────────────────────────────────────────────────
+size: 128              # observation resolution (square)
+deter: 256             # RSSM deterministic (GRU) state width
+
+# ── optim ─────────────────────────────────────────────────────────────────────
+wm_lr: 0.0002
+actor_lr: 0.0001
+critic_lr: 0.0003
+
+# ── eval / logging ────────────────────────────────────────────────────────────
+eval_every: 10          # run a greedy eval every N iters (a point on the curve)
+eval_eps: 10            # greedy episodes per eval
+ckpt_every: 10         # save train_{wm,actor,critic}.pt every N iters
+logdir: tmp/dreamer/tb # tensorboard run dir (a timestamped subdir is created per run)
+seed: 0

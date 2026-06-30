@@ -1,0 +1,54 @@
+# Level 1 action table — a trimmed subset of baseline.yaml curated from the
+# combo histogram of winning Level 1 traces (synthetic/analyze_action_usage.py).
+#
+# Level 1 is a "forward" side-scroll level: run right, aim up/diagonal to shoot,
+# jump gaps, drop prone (D) to fire low, step left to dodge. The baseline's
+# directional-jump noise (UJ, DJ, ULJ, URJ-as-rare, UL, LJ) is dropped — those
+# appear only a handful of times in 63k frames of wins, i.e. search noise, not
+# strategy. RJ/J (gap jumps) and L/LF (dodge-back) are kept despite being rare
+# because they are tactically necessary.
+#
+# Bit order: [B, NULL, SELECT, START, UP, DOWN, LEFT, RIGHT, A]
+# (B = fire, A = jump). skip matches baseline/replay (contra/replay.py).
+skip: 3
+actions:
+  _:   [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  R:   [0, 0, 0, 0, 0, 0, 0, 1, 0]
+  RF:  [1, 0, 0, 0, 0, 0, 0, 1, 0]
+  RJ:  [0, 0, 0, 0, 0, 0, 0, 1, 1]
+  UR:  [0, 0, 0, 0, 1, 0, 0, 1, 0]
+  URF: [1, 0, 0, 0, 1, 0, 0, 1, 0]
+  URJ: [0, 0, 0, 0, 1, 0, 0, 1, 1]
+  U:   [0, 0, 0, 0, 1, 0, 0, 0, 0]
+  UF:  [1, 0, 0, 0, 1, 0, 0, 0, 0]
+  F:   [1, 0, 0, 0, 0, 0, 0, 0, 0]
+  J:   [0, 0, 0, 0, 0, 0, 0, 0, 1]
+  D:   [0, 0, 0, 0, 0, 1, 0, 0, 0]
+  DF:  [1, 0, 0, 0, 0, 1, 0, 0, 0]
+  L:   [0, 0, 0, 0, 0, 0, 1, 0, 0]
+  LF:  [1, 0, 0, 0, 0, 0, 1, 0, 0]
+
+# Per-button hold penalties, charged once per step a button is held
+# (search_reward.py press_penalty). Right (forward) is the canonical action and
+# stays free; every other button pays a small tie-break cost so that among
+# reward-equivalent actions the search commits the simplest one. This gives BC a
+# consistent state->action label instead of an arbitrary R-vs-UR coin flip when
+# aiming up / firing buys no extra reward.
+#
+# Magnitude is kept far below the smallest real task reward (a landed shot is
+# enemy_hp=1.0, a death is -15, a step of progress ~0.1/px) so these costs only
+# ever break ties — never veto a jump/fire/dodge that actually earns reward.
+# Inert presses (held fire, airborne jump) are already removed structurally by
+# the stateful sampler (action_mask.py), so these costs act purely as tie-breaks.
+costs:
+  F: -0.02   # fire (B)
+  J: -0.02   # jump (A)
+  U: -0.02   # up
+  D: -0.02   # down
+  L: -0.02   # left
+  # R omitted -> 0: forward is the canonical action, never penalised
+
+prior:
+  traces: "contra/human_recordings/Level1/*.npz"  # source traces for the prior
+  mode: bigram     # bigram = P(next|prev) ; unigram = marginal P(action)
+  smooth: 0.0      # blend toward uniform in [0,1]; keeps rare actions explorable
