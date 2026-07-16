@@ -112,14 +112,17 @@ def trace_paths(level: int) -> list[str]:
     return sorted(glob.glob(f"tmp/mc_trace/level{level}/*.npz"))
 
 
-def replay_traces(paths: list[str], size: int = 128, stride: int = 1,
-                  max_traces: int | None = None, verbose: bool = True):
-    """Replay traces → (frames, states, trace_ids).
+def iter_trace_frames(paths: list[str], size: int = 128, stride: int = 1,
+                      max_traces: int | None = None):
+    """Stream ``(frame_u8 (size,size,3), ram_u8 (2048,), trace_id)`` one frame at a
+    time by replaying traces through the single shared emulator.
 
-    frames    uint8  (M, size, size, 3)   post-SKIP screens, resized
-    states    float32(M, 3)               [player_x, player_y, n_enemies] from RAM
-    trace_ids int    (M,)                  which trace each frame came from
-    stride    record every `stride`-th decision frame (steps all, records some).
+    Accumulates nothing, so it scales to the full trace set (128GB of frames at
+    native res if you kept them all — see dreamer.pretrain_ae.materialize_traces,
+    which streams this into a disk memmap). ``stride`` records every Nth decision
+    frame (steps all, yields some). The number of frames a trace yields is
+    ``ceil(len(actions)/stride)``, so callers can size storage up-front from the
+    action lengths without replaying.
     """
     if max_traces:
         paths = paths[:max_traces]
@@ -130,9 +133,6 @@ def replay_traces(paths: list[str], size: int = 128, stride: int = 1,
         inttype=retro.data.Integrations.CUSTOM_ONLY,
     )
     env.reset()
-    frames: list[np.ndarray] = []
-    states: list[np.ndarray] = []
-    trace_ids: list[int] = []
     try:
         for ti, p in enumerate(paths):
             z = np.load(p, allow_pickle=True)
@@ -143,18 +143,35 @@ def replay_traces(paths: list[str], size: int = 128, stride: int = 1,
                     env.step(act.copy())
                 if j % stride:
                     continue
-                screen = env.em.get_screen()
-                frames.append(cv2.resize(screen, (size, size), interpolation=cv2.INTER_AREA))
-                ram = env.unwrapped.get_ram()
-                s = state_from_ram(ram)
-                n_en = float((s[26:90].reshape(16, 4)[:, 0] != 0).sum())
-                states.append(np.array([s[3], s[4], n_en], dtype=np.float32))
-                trace_ids.append(ti)
-            if verbose:
-                print(f"  [{ti+1}/{len(paths)}] {p.split('/')[-1]}: "
-                      f"{len(actions)} actions → {len(frames)} frames total")
+                frame = cv2.resize(env.em.get_screen(), (size, size),
+                                   interpolation=cv2.INTER_AREA).astype(np.uint8)
+                yield frame, env.unwrapped.get_ram().astype(np.uint8), ti
     finally:
         env.close()
+
+
+def replay_traces(paths: list[str], size: int = 128, stride: int = 1,
+                  max_traces: int | None = None, verbose: bool = True):
+    """Replay traces → (frames, states, trace_ids), holding everything in memory.
+
+    frames    uint8  (M, size, size, 3)   post-SKIP screens, resized
+    states    float32(M, 3)               [player_x, player_y, n_enemies] from RAM
+    trace_ids int    (M,)                  which trace each frame came from
+
+    Fine for the small collections the verify gates use; for the full trace set at
+    native res stream via :func:`iter_trace_frames` instead (won't fit in RAM).
+    """
+    frames: list[np.ndarray] = []
+    states: list[np.ndarray] = []
+    trace_ids: list[int] = []
+    for frame, ram, ti in iter_trace_frames(paths, size, stride, max_traces):
+        s = state_from_ram(ram)
+        n_en = float((s[26:90].reshape(16, 4)[:, 0] != 0).sum())
+        frames.append(frame)
+        states.append(np.array([s[3], s[4], n_en], dtype=np.float32))
+        trace_ids.append(ti)
+    if verbose:
+        print(f"  replayed {len(np.unique(trace_ids))} traces → {len(frames)} frames")
     return (np.asarray(frames, dtype=np.uint8),
             np.asarray(states, dtype=np.float32),
             np.asarray(trace_ids, dtype=np.int64))

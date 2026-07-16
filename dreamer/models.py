@@ -82,3 +82,36 @@ class ConvDecoder(nn.Module):
     def forward(self, feat: torch.Tensor) -> torch.Tensor:
         h = self.fc(feat).view(-1, self.start_ch, self.minres, self.minres)
         return torch.sigmoid(self.deconvs(h))
+
+
+class EntityHead(nn.Module):
+    """Embedding (B, embed_dim) → occupancy heatmaps (B, n_classes, grid, grid) in [0,1].
+
+    A small deconv mirror of ConvDecoder that reads the *embedding* — the vector
+    that gets frozen and handed to the RSSM — on purpose. Pixel reconstruction
+    alone won't pull small, task-critical entities (bullets are ~2px) into that
+    vector, because they barely register in image MSE. Making the four entity
+    heatmaps decodable from the embedding forces the encoder to keep them.
+    """
+
+    def __init__(self, embed_dim: int = 1024, n_classes: int = 4, grid: int = 32,
+                 depth: int = 32, minres: int = 4):
+        super().__init__()
+        n = _num_layers(grid, minres)
+        self.minres = minres
+        self.start_ch = depth * (2 ** (n - 1))
+        self.fc = nn.Linear(embed_dim, self.start_ch * minres * minres)
+        layers: list[nn.Module] = []
+        ch = self.start_ch
+        for i in reversed(range(n)):
+            last = i == 0
+            out = n_classes if last else depth * (2 ** (i - 1))
+            layers += [nn.ConvTranspose2d(ch, out, 4, stride=2, padding=1)]
+            if not last:
+                layers += [_norm(out), nn.SiLU()]
+            ch = out
+        self.deconvs = nn.Sequential(*layers)
+
+    def forward(self, embed: torch.Tensor) -> torch.Tensor:
+        h = self.fc(embed).view(-1, self.start_ch, self.minres, self.minres)
+        return torch.sigmoid(self.deconvs(h))

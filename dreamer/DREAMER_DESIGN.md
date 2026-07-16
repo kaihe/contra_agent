@@ -13,7 +13,7 @@ DreamerV3, it says so.
 |---|---|---|---|---|
 | C1 | env adapter | `envs.py` | data plumbing | smoke |
 | C2 | replay buffer | `buffer.py` | data plumbing | sanity |
-| **C3a** | encoder / decoder | `models.py` | World Model | probe ✅ |
+| **C3a** | encoder / decoder + entity head | `models.py` | World Model | entity heatmap ✅ |
 | **C3b** | RSSM (dynamics) | `world_model.py` | World Model | dream ✅* |
 | **C3c** | reward + continue heads | `world_model.py` | World Model | r=0.905 ✅ |
 | **C4** | critic + λ-returns | (todo) | Behavior | value tracks return |
@@ -35,17 +35,13 @@ reward/value, and improves the policy by gradient. At deploy the actor is a
 feed-forward reflex.
 
 ```
-   ┌─────────────── WORLD MODEL  (C3a + C3b + C3c) ───────────────┐
+   ┌──────────────────────────── WORLD MODEL  (C3a + C3b + C3c) ─────────────────────────────┐
    image ─►[encoder C3a]─►embed ─┐
-                                 ├►[RSSM C3b]─►(h,z)─►[decoder C3a] ─► image  (recon)
-   action ───────────────────────┘                 ├►[reward C3c]  ─► reward (reward)
-                                                    └►[continue C3c]─► cont   (continue)
-   └───────────────────────────────────────────────────────────────┘
-                                 │ state (h,z)
-        ┌────────────────────────┴──────── BEHAVIOR (C4 + C5) ───────────┐
-        │  imagine H steps with the actor, score with reward + value:    │
-        │     actor C5:  a ~ π(a|s)        critic C4: v(s) ≈ λ-return     │
-        └─────────────────────────────────────────────────────────────────┘
+                                 ├►[RSSM C3b]─►(h,z)─┬►[decoder  C3a]─► image    (recon)
+   action ───────────────────────┘                   ├►[entity   C3a]─► heatmaps (entity)
+                                                     ├►[reward   C3c]─► reward   (reward)
+                                                     └►[continue C3c]─► cont     (continue)
+   └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -77,13 +73,25 @@ so they're presented together but each network/loss term is tagged.
 
 | tag | network | maps | implements |
 |---|---|---|---|
-| **C3a** | encoder `q_enc` | image → `embed (1024)` | `ConvEncoder` (5 stride-2 convs, 128→4) |
+| **C3a** | encoder `q_enc` | image → `embed (1024)` | `ConvEncoder` (stride-2 convs, native 256→4); pretrained on traces + frozen |
 | **C3a** | decoder `p(x\|s)` | `feat → image` | `ConvDecoder` (mirror) |
+| **C3a** | entity head | `embed → 4×32×32 heatmaps` | `EntityHead` (deconv) — aux gate signal, not in the RL loop |
 | **C3b** | sequence model `f` | `(h_{t-1},z_{t-1},a_{t-1}) → h_t` | GRUCell |
 | **C3b** | prior `p(z_t\|h_t)` | `h_t → logits(z_t)` | `prior_net` MLP — **the dynamics** |
 | **C3b** | posterior `q(z_t\|h_t,x_t)` | `(h_t, embed_t) → logits(z_t)` | `post_net` MLP |
 | **C3c** | reward head `p(r_t\|s)` | `feat → reward` (symlog) | MLP |
 | **C3c** | continue head `p(c_t\|s)` | `feat → logit` | MLP |
+
+**C3a entity heatmap (gate).** Pixel reconstruction is background-dominated, so it
+under-weights the small entities that decide the game. To force them into the
+latent, the encoder is pretrained on traces with an auxiliary `EntityHead`:
+`embed → four 32×32 occupancy heatmaps` (player, player-bullets, enemies,
+enemy-bullets), supervised from `contra.entities` RAM ground truth. **Gate:** on
+*held-out* traces the head localizes entities both quantitatively (low per-class
+heatmap MSE across all four classes) and visually (the overlay lands on the sprites). This replaces the old linear-probe gate — same "is entity info in the
+latent?" question, but nonlinear (matching what the RSSM needs) and eyeball-checkable
+per class. The pretrained encoder is then **frozen** for C3b onward; the decoder and
+entity head are training-time only, neither is in the RL loop.
 
 The **prior** (C3b) and **posterior** (C3b) both produce `z_t`; the prior predicts
 it *without* the frame (imagination), the posterior *with* it (training). Training
@@ -247,7 +255,8 @@ Planning is already baked into the actor by all that imagined training.
 - **Decision rate is 20 Hz** (`SKIP=3`), so `H=15` ≈ 0.75 s of real play.
 - **Sprite blindness is cosmetic (C3a).** The decoder under-renders the
   player/enemies (background-dominated MSE), but the *latent* encodes them
-  (linear probe: player ~7px; reward head r=0.905). The actor reads the latent.
+  (entity heatmap on held-out traces: all four classes at low per-class MSE;
+  reward head r=0.905). The actor reads the latent.
 - **⚠️ Open issue — the prior (C3b) under-models slow motion.** Open-loop
   imagination *freezes* from a static start and stalls over long horizons; it
   tracks motion well only over ~15 steps from already-active states. Fine for

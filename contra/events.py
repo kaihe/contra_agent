@@ -1,3 +1,5 @@
+from collections import Counter
+
 import numpy as np
 
 
@@ -277,6 +279,58 @@ def _enemy_hit_detail(pre: np.ndarray, cur: np.ndarray, boss: bool | None = None
     return ", ".join(parts)
 
 
+def _enemy_kills(pre: np.ndarray, cur: np.ndarray):
+    """Yield (level, enemy type) for each regular enemy destroyed this step.
+
+    A kill is the HP decrement that crosses to zero: the damage routine runs
+    add_enemy_score_set_enemy_routine (award points + set destroyed routine)
+    exactly when ENEMY_HP reaches 0 after a hit (bank7.asm bullet_collision_logic).
+    So the kill frame is `0 < pre_hp < 0xf0` and `cur_hp == 0`.
+
+    Reuses the same liveness / bullet / falling-rock guards as
+    _enemy_hp_decrements, and restricts to non-boss types: armored types (wall
+    plating, cores) keep ENEMY_HP=1 with real HP in ENEMY_VAR_1 and reset HP to 1
+    on every hit (bank0.asm 'ting' logic), so cur_hp==0 there is a hit, not a
+    kill — those stay on the BOSS_HIT HP-drain reward.
+    """
+    level = int(pre[ADDR_LEVEL])
+    for slot in range(ADDR_ENEMY_HP_COUNT):
+        etype  = int(pre[ADDR_ENEMY_TYPE + slot])
+        pre_hp = int(pre[ADDR_ENEMY_HP   + slot])
+        cur_hp = int(cur[ADDR_ENEMY_HP   + slot])
+        if not (0 < pre_hp < 0xf0) or cur_hp != 0:
+            continue
+        if etype == 0x01:                      # Bullet — projectile, not an enemy
+            continue
+        if etype == ENEMY_TYPE_FALLING_ROCK and level not in {1, 3, 4, 5, 6, 7}:
+            continue                            # L3 falling rock respawns endlessly
+        if _is_boss_enemy_type(level, etype):   # ting-reset armored types / bosses
+            continue
+        yield level, etype
+
+
+def enemy_kills(pre_ram: np.ndarray, curr_ram: np.ndarray) -> list[tuple[int, int]]:
+    """List of (level, enemy_type) for regular enemies killed this step."""
+    return list(_enemy_kills(pre_ram, curr_ram))
+
+
+def _enemy_kill_detail(pre: np.ndarray, cur: np.ndarray) -> str:
+    counts = Counter(enemy_type_name(etype, level) for level, etype in _enemy_kills(pre, cur))
+    return ", ".join(name if n == 1 else f"{name} ×{n}" for name, n in counts.items())
+
+
+EV_ENEMY_KILL = ContraEvent(
+    tag="ENEMY_KILL",
+    desc="One or more regular enemies were destroyed this step (ENEMY_HP crossed to 0). "
+         "Detail names the killed types with counts (e.g. 'Soldier ×2, Sniper'). "
+         "Bosses and armored cores are excluded — they ting-reset HP and are covered "
+         "by BOSS_HIT.",
+    trigger_fn=lambda pre, cur: float(sum(1 for _ in _enemy_kills(pre, cur))),
+    detail_fn=_enemy_kill_detail,
+    weight=0.0,
+    important=True,
+)
+
 EV_ENEMY_HIT = ContraEvent(
     tag="ENEMY_HIT",
     desc="Sum of HP decrements across all active enemy slots. "
@@ -527,6 +581,7 @@ LEVELS_BASE = [
     EV_LEVEL_TRANSITION,
     EV_REGULAR_ENEMY_HIT,
     EV_BOSS_HIT,
+    EV_ENEMY_KILL,
     EV_SPREAD_LOST,
     EV_PLAYER_DIE,
     EV_GUN_PICKUP,

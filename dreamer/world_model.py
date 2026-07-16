@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dreamer.models import ConvDecoder, ConvEncoder
+from dreamer.models import ConvDecoder, ConvEncoder, EntityHead
 
 
 def _mlp(inp, hidden, out):
@@ -126,9 +126,11 @@ class RSSM(nn.Module):
 
 class WorldModel(nn.Module):
     def __init__(self, size: int = 128, num_actions: int = 21, embed_dim: int = 1024,
-                 deter: int = 256, stoch: int = 32, classes: int = 32, depth: int = 32):
+                 deter: int = 256, stoch: int = 32, classes: int = 32, depth: int = 32,
+                 entity_grid: int | None = None, entity_weight: float = 1.0):
         super().__init__()
         self.size = size
+        self.embed_dim = embed_dim
         self.encoder = ConvEncoder(size, depth=depth, embed_dim=embed_dim)
         self.rssm = RSSM(embed_dim, num_actions, deter, stoch, classes)
         self.feat_dim = deter + stoch * classes
@@ -136,6 +138,17 @@ class WorldModel(nn.Module):
         # reward in symlog space (handles wide range); continue = 1-terminal as a logit.
         self.reward_head = _mlp(self.feat_dim, 256, 1)
         self.continue_head = _mlp(self.feat_dim, 256, 1)
+
+        # Optional entity head on the RSSM feature. With a frozen encoder, z is
+        # shaped mainly by (blurry) pixel recon, so entities the encoder captured
+        # can be re-dropped inside (h,z). This head forces them to survive: its
+        # target is the frozen encoder's OWN entity head on embed (distillation),
+        # so no RAM/heatmap plumbing is needed in the buffer. See load_encoder.
+        self.entity_grid = entity_grid
+        self.entity_weight = entity_weight
+        if entity_grid:
+            self.enc_entity_head = EntityHead(embed_dim, 4, grid=entity_grid, depth=depth)
+            self.feat_entity_head = EntityHead(self.feat_dim, 4, grid=entity_grid, depth=depth)
 
     def _encode_seq(self, image):
         B, L = image.shape[:2]
@@ -149,7 +162,8 @@ class WorldModel(nn.Module):
     def loss(self, batch):
         image, action, first = batch["image"], batch["action"], batch["is_first"]
         B, L = image.shape[:2]
-        posts, priors = self.observe(image, action, first)
+        embed = self._encode_seq(image)                       # encoder runs once
+        posts, priors = self.rssm.observe(embed, action, first)
         feat = self.rssm.get_feat(posts)
         recon = self.decoder(feat.reshape(B * L, -1)).reshape(B, L, 3, self.size, self.size)
         target = image.permute(0, 1, 4, 2, 3)
@@ -170,6 +184,18 @@ class WorldModel(nn.Module):
         metrics = {"loss": loss.item(), "recon": recon_loss.item(), "kl": kl.item(),
                    "dyn": dyn.item(), "rep": rep.item(),
                    "reward": reward_loss.item(), "cont": cont_loss.item()}
+
+        # entity head (optional): distill the frozen encoder's entity heatmaps from
+        # embed into the RSSM feature, forcing entities to survive into (h,z).
+        if self.entity_grid:
+            with torch.no_grad():
+                ent_target = self.enc_entity_head(embed.reshape(B * L, -1))
+            ent_pred = self.feat_entity_head(feat.reshape(B * L, -1))
+            entity_loss = F.mse_loss(ent_pred, ent_target)
+            loss = loss + self.entity_weight * entity_loss
+            metrics["entity"] = entity_loss.item()
+            metrics["loss"] = loss.item()
+
         return loss, metrics, posts
 
     def predict_heads(self, feat):
@@ -180,3 +206,30 @@ class WorldModel(nn.Module):
     def decode(self, feat):
         n = feat.shape[0] if feat.dim() == 2 else feat.shape[0] * feat.shape[1]
         return self.decoder(feat.reshape(n, -1)).reshape(*feat.shape[:-1], 3, self.size, self.size)
+
+    def predict_entity(self, feat):
+        """Predicted entity heatmaps from the RSSM feature (verification / probing)."""
+        g = self.entity_grid
+        n = feat.shape[0] if feat.dim() == 2 else feat.shape[0] * feat.shape[1]
+        return self.feat_entity_head(feat.reshape(n, -1)).reshape(*feat.shape[:-1], 4, g, g)
+
+    def load_encoder(self, path, device="cpu"):
+        """Load a pretrained ConvEncoder (dreamer.pretrain_ae checkpoint) into this WM.
+
+        If this WM was built with entity_grid, also loads the encoder's EntityHead as
+        the (frozen) distillation target for feat_entity_head. The RSSM, decoder,
+        reward/continue heads and feat_entity_head still train.
+        """
+        ckpt = torch.load(path, map_location=device)
+        self.encoder.load_state_dict(ckpt["encoder"])
+        if self.entity_grid:
+            self.enc_entity_head.load_state_dict(ckpt["entity_head"])
+
+    def freeze_encoder(self):
+        """Freeze the encoder (and the encoder entity head, if present): no grad
+        updates. Exclude from the optimizer via
+        `filter(lambda p: p.requires_grad, wm.parameters())`."""
+        mods = [self.encoder] + ([self.enc_entity_head] if self.entity_grid else [])
+        for m in mods:
+            for p in m.parameters():
+                p.requires_grad_(False)

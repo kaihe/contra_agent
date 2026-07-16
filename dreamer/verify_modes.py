@@ -10,10 +10,11 @@ All three share the same `context`-frame warmup, so they start from the same
 state. Read it by scrolling down: CLOSED should stay glued to REAL the whole way;
 OPEN should track then visibly drift/slow (the freeze).
 
-`run_comparison` is imported by dreamer.verify_rssm (which trains + saves the
-model first). Standalone, this loads tmp/dreamer/world_model.pt — no retraining:
+The rollout helpers here (`_load_trace`, `_pick_anchors`, `_rollout`) are reused by
+dreamer.verify_rssm (the Layer 1-3 gate). Standalone, this loads the checkpoint
+saved by dreamer.train_wm — no retraining:
 
-    python -m dreamer.compare_modes --n_anchors 10
+    python -m dreamer.verify_modes --n_anchors 10
 """
 
 from __future__ import annotations
@@ -131,12 +132,20 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     trace = args.trace or trace_paths(1)[8]
-    wm = WorldModel(size=args.size, deter=args.deter).to(device)
-    wm.load_state_dict(torch.load(args.ckpt, map_location=device))
+    blob = torch.load(args.ckpt, map_location=device)
+    if isinstance(blob, dict) and "world_model" in blob:      # dreamer.train_wm format
+        cfg = blob["config"]
+        size = cfg["size"]
+        wm = WorldModel(size=size, deter=cfg["deter"], entity_grid=cfg["entity_grid"]).to(device)
+        wm.load_state_dict(blob["world_model"])
+    else:                                                     # legacy raw state_dict
+        size = args.size
+        wm = WorldModel(size=size, deter=args.deter).to(device)
+        wm.load_state_dict(blob)
     wm.eval()
-    print(f"[compare] loaded {args.ckpt}")
+    print(f"[modes] loaded {args.ckpt} (size={size})")
     run_comparison(wm, trace, n_anchors=args.n_anchors, context=args.context,
-                   horizon=args.horizon, size=args.size, seed=args.seed, device=device)
+                   horizon=args.horizon, size=size, seed=args.seed, device=device)
 
 
 if __name__ == "__main__":
